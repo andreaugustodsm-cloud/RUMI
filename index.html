@@ -1398,6 +1398,63 @@ async function sincronizarAgora(silencioso) {
 }
 
 // Botão "buscar alterações da equipe"
+let pacoteImportacao = null;
+
+function lerArquivoImportacao(ev) {
+  const arq = ev.target.files && ev.target.files[0];
+  ev.target.value = '';
+  const st = document.getElementById('importacaoStatus');
+  if (!arq) return;
+  const leitor = new FileReader();
+  leitor.onload = () => {
+    try {
+      const d = JSON.parse(leitor.result);
+      if (d.formato !== 'rumi-importacao') throw new Error('formato');
+      pacoteImportacao = d;
+      const jaTem = new Set([...(state.data.desvios || []), ...(state.data.acoes || [])].map(c => c.id));
+      const novosD = (d.desvios || []).filter(c => !jaTem.has(c.id)).length;
+      const novosA = (d.acoes || []).filter(c => !jaTem.has(c.id)).length;
+      st.innerHTML = `
+        <div class="p-3 rounded-md" style="background: var(--surface-2);">
+          <div><strong>${(d.desvios || []).length}</strong> desvios e <strong>${(d.acoes || []).length}</strong> ações no arquivo.</div>
+          <div style="color: var(--text-2);">Novos para importar: ${novosD} desvios e ${novosA} ações.</div>
+          <button onclick="importarHistorico()" class="btn btn-primary mt-3" ${novosD + novosA ? '' : 'disabled'}>
+            <i data-lucide="upload" class="w-4 h-4"></i> Importar agora
+          </button>
+        </div>`;
+      desenharIcones();
+    } catch (e) {
+      st.innerHTML = '<span style="color: var(--danger);">Esse arquivo não é um pacote de importação da Rumi.</span>';
+    }
+  };
+  leitor.readAsText(arq);
+}
+
+async function importarHistorico() {
+  const st = document.getElementById('importacaoStatus');
+  if (!pacoteImportacao || !ehAdmin()) return;
+  if (!apiConfigurada()) { st.textContent = 'Sem conexão com o Google — não dá para importar no modo local.'; return; }
+  const itens = [
+    ...(pacoteImportacao.desvios || []).map(card => ({ tipo: 'desvios', card })),
+    ...(pacoteImportacao.acoes || []).map(card => ({ tipo: 'acoes', card })),
+  ];
+  const LOTE = 120;
+  let inseridos = 0, pulados = 0;
+  try {
+    for (let i = 0; i < itens.length; i += LOTE) {
+      st.innerHTML = `⟳ Enviando ${Math.min(i + LOTE, itens.length)} de ${itens.length}... não feche esta página.`;
+      const r = await apiPost({ acao: 'importarLote', itens: itens.slice(i, i + LOTE) });
+      if (!r.ok) throw new Error(r.erro || 'falha');
+      inseridos += r.inseridos || 0; pulados += r.pulados || 0;
+    }
+    st.innerHTML = `<span style="color: var(--ok);">✓ Importação concluída: ${inseridos} cards novos${pulados ? `, ${pulados} já existiam` : ''}. Carregando...</span>`;
+    pacoteImportacao = null;
+    await recarregarDoGoogle();
+  } catch (e) {
+    st.innerHTML = `<span style="color: var(--danger);">Parou com erro (${escapeHtml(e.message || '')}). ${inseridos} já foram gravados — pode tentar de novo, os repetidos são pulados.</span>`;
+  }
+}
+
 async function recarregarDoGoogle() {
   if (!apiConfigurada()) { showToast('Sincronização não configurada'); return; }
   await processarFila();
@@ -1455,6 +1512,16 @@ function sendEmail(destinatarios, assunto, corpo) {
   const url = 'mailto:' + encodeURIComponent(to) + '?subject=' + encodeURIComponent(assunto) + '&body=' + encodeURIComponent(corpo);
   window.location.href = url;
   showToast('Abrindo Outlook · confirme o envio');
+}
+
+// Monta as opções de uma lista. Se o card tiver um valor que não está mais na lista
+// (ex.: dado importado do Pipefy), ele continua aparecendo — assim salvar não apaga nada.
+function opc(lista, atual) {
+  const itens = (lista || []).map(v => `<option value="${escapeHtml(v)}" ${atual === v ? 'selected' : ''}>${escapeHtml(v)}</option>`);
+  if (atual && !(lista || []).includes(atual)) {
+    itens.push(`<option value="${escapeHtml(atual)}" selected>${escapeHtml(atual)} (valor antigo)</option>`);
+  }
+  return itens.join('');
 }
 
 function proximoNumeroDesvio() {
@@ -2185,6 +2252,39 @@ function getItemsByType(type) {
        : [];
 }
 
+const ROTULOS_EXTRAS = {
+  criador: 'Criado por', responsaveis: 'Responsáveis', quantidadeAfetada: 'Quantidade afetada',
+  unidadeMedida: 'Unidade de medida', dataFormulacao: 'Data da formulação', aprovacaoAvaliacaoEm: 'Aprovação da avaliação',
+  prazoFinalPlano: 'Prazo final do plano', statusPlano: 'Status do plano', concluidoComAlerta: 'Concluído com alerta',
+  concluidoEm: 'Concluído em', resultadoEficacia: 'Resultado da eficácia', reaberturas: 'Reaberturas',
+  etiquetas: 'Etiquetas', criadoEm: 'Criado em', investimento: 'Investimento',
+};
+function renderAvisoImportado(card) {
+  const imp = card && card.importacao;
+  if (!imp) return '';
+  const extras = Object.assign({}, imp.extras || {}, imp.investimento ? { investimento: imp.investimento } : {},
+    imp.concluidoEm ? { concluidoEm: imp.concluidoEm } : {});
+  const fmt = v => /^\d{4}-\d{2}-\d{2}T/.test(String(v)) ? new Date(v).toLocaleDateString('pt-BR') : String(v);
+  const linhas = Object.keys(extras).map(k =>
+    `<div><span style="color: var(--text-3);">${escapeHtml(ROTULOS_EXTRAS[k] || k)}:</span> ${escapeHtml(fmt(extras[k]))}</div>`).join('');
+  return `
+    <details class="mb-4 rounded-lg border text-xs" style="border-color: var(--border); background: var(--surface-2);">
+      <summary class="cursor-pointer px-3 py-2 flex items-center gap-2" style="color: var(--text-2);">
+        <i data-lucide="history" class="w-3.5 h-3.5"></i>
+        Importado do ${escapeHtml(imp.origem || 'Pipefy')} · código <span class="mono">${escapeHtml(imp.codigo || imp.codigoDesvio || '')}</span>
+        ${imp.faseOriginal ? ` · fase original: <strong>${escapeHtml(imp.faseOriginal)}</strong>` : ''}
+        ${imp.criticidadeOriginal ? ` · criticidade original: ${escapeHtml(imp.criticidadeOriginal)}` : ''}
+      </summary>
+      ${linhas ? `<div class="px-3 pb-3 grid grid-cols-2 gap-x-4 gap-y-1">${linhas}</div>` : ''}
+    </details>`;
+}
+
+const LIMITE_COLUNA = 60;
+function dataDoCard(c) {
+  return String(c.registro?.dataOcorrencia || c.compras?.dataSolicitacao || c.registro?.dataDeteccao
+    || c.dataLimite || c._atualizadoEm || '');
+}
+
 function renderKanban(type) {
   const fases = getFasesByType(type);
   const items = getItemsByType(type);
@@ -2220,13 +2320,18 @@ function renderKanban(type) {
       <div class="flex-1 overflow-x-auto kanban-scroll p-4">
         <div class="flex gap-4 h-full">
           ${fases.map(fase => {
-            const faseItems = filtered.filter(i => i.fase === fase.id);
+            const todosDaFase = filtered.filter(i => i.fase === fase.id);
+            // Coluna muito cheia (ex.: histórico importado): mostra os mais recentes
+            const faseItems = todosDaFase.length > LIMITE_COLUNA
+              ? todosDaFase.slice().sort((a, b) => dataDoCard(b).localeCompare(dataDoCard(a))).slice(0, LIMITE_COLUNA)
+              : todosDaFase;
+            const ocultos = todosDaFase.length - faseItems.length;
             return `
               <div class="kanban-column flex-shrink-0 flex flex-col">
                 <div class="coluna-header" style="--cor-fase: ${fase.color};">
                   <div class="flex items-center gap-2 min-w-0">
                     <h3 class="font-semibold text-sm truncate" style="color: ${fase.color};">${fase.label}</h3>
-                    <span class="coluna-contador" style="background: ${fase.softBg}; color: ${fase.color};">${faseItems.length}</span>
+                    <span class="coluna-contador" style="background: ${fase.softBg}; color: ${fase.color};">${todosDaFase.length}</span>
                   </div>
                   <button onclick="openNewCardModalInPhase('${fase.id}')" class="btn-ghost p-1 rounded flex-shrink-0" title="Adicionar aqui">
                     <i data-lucide="plus" class="w-3.5 h-3.5"></i>
@@ -2235,6 +2340,7 @@ function renderKanban(type) {
                 <div class="drop-zone coluna-corpo flex-1 p-2 space-y-2 overflow-y-auto kanban-scroll" data-fase="${fase.id}" data-type="${type}">
                   ${faseItems.length
                     ? faseItems.map(item => renderCardItem(item, type)).join('')
+                      + (ocultos > 0 ? `<div class="coluna-vazia">Mostrando os ${faseItems.length} mais recentes.<br>+${ocultos} mais antigos — use a busca para encontrar.</div>` : '')
                     : '<div class="coluna-vazia">Nenhum card aqui</div>'}
                 </div>
               </div>
@@ -2935,6 +3041,8 @@ function renderDesvioForm(card, isNew) {
       }).join('')}
     </div>
 
+    ${renderAvisoImportado(card)}
+
     <!-- Cabeçalho: número + fase + email -->
     <div class="flex items-center justify-between mb-4 p-3 rounded-lg border" style="border-color: var(--border); background: var(--surface-2);">
       <div>
@@ -2968,7 +3076,7 @@ function renderDesvioForm(card, isNew) {
         <div>
           <label class="block text-xs font-semibold mb-1" style="color: var(--text-2);">UNIDADE *</label>
           <select id="f_reg_unidade" class="input">
-            ${UNIDADES.map(u => `<option value="${u}" ${card.registro.unidade === u ? 'selected' : ''}>${u}</option>`).join('')}
+            ${opc(UNIDADES, card.registro.unidade)}
           </select>
         </div>
         <div>
@@ -2993,6 +3101,7 @@ function renderDesvioForm(card, isNew) {
             <option value="" ${!card.registro.gatilhoOperacional ? 'selected' : ''}>— Selecionar —</option>
             <option value="sim" ${card.registro.gatilhoOperacional === 'sim' ? 'selected' : ''}>Sim</option>
             <option value="nao" ${card.registro.gatilhoOperacional === 'nao' ? 'selected' : ''}>Não</option>
+            <option value="naoSei" ${card.registro.gatilhoOperacional === 'naoSei' ? 'selected' : ''}>Não sei</option>
           </select>
         </div>
         <div>
@@ -3047,7 +3156,7 @@ function renderDesvioForm(card, isNew) {
         <div>
           <label class="block text-xs font-semibold mb-1" style="color: var(--text-2);">RESPONSÁVEL PELO PREENCHIMENTO</label>
           <select id="f_reg_responsavelPreenchimento" class="input">
-            ${RESPONSAVEIS.map(r => `<option value="${r}" ${card.registro.responsavelPreenchimento === r ? 'selected' : ''}>${r}</option>`).join('')}
+            ${opc(RESPONSAVEIS, card.registro.responsavelPreenchimento)}
           </select>
         </div>
       </div>
@@ -3091,7 +3200,7 @@ function renderDesvioForm(card, isNew) {
           <label class="block text-xs font-semibold mb-1" style="color: var(--text-2);">EM QUAL ÁREA OCORREU O DESVIO?</label>
           <select id="f_aq_area" class="input">
             <option value="">— Selecionar —</option>
-            ${AREAS.map(a => `<option value="${a}" ${card.avalQualidade.area === a ? 'selected' : ''}>${a}</option>`).join('')}
+            ${opc(AREAS, card.avalQualidade.area)}
           </select>
         </div>
         <div>
@@ -3102,21 +3211,21 @@ function renderDesvioForm(card, isNew) {
           <label class="block text-xs font-semibold mb-1" style="color: var(--text-2);">CATEGORIA DO DESVIO</label>
           <select id="f_aq_categoria" class="input">
             <option value="">— Selecionar —</option>
-            ${CATEGORIAS.map(c => `<option value="${c}" ${card.avalQualidade.categoria === c ? 'selected' : ''}>${c}</option>`).join('')}
+            ${opc(CATEGORIAS, card.avalQualidade.categoria)}
           </select>
         </div>
         <div>
           <label class="block text-xs font-semibold mb-1" style="color: var(--text-2);">TIPO DO DESVIO</label>
           <select id="f_aq_tipo" class="input">
             <option value="">— Selecionar —</option>
-            ${TIPOS_DESVIO.map(t => `<option value="${t}" ${card.avalQualidade.tipo === t ? 'selected' : ''}>${t}</option>`).join('')}
+            ${opc(TIPOS_DESVIO, card.avalQualidade.tipo)}
           </select>
         </div>
         <div>
           <label class="block text-xs font-semibold mb-1" style="color: var(--text-2);">RESPONSÁVEL PELA AVALIAÇÃO INICIAL</label>
           <select id="f_aq_responsavelAvalInicial" class="input">
             <option value="">— Selecionar —</option>
-            ${RESPONSAVEIS.map(r => `<option value="${r}" ${card.avalQualidade.responsavelAvalInicial === r ? 'selected' : ''}>${r}</option>`).join('')}
+            ${opc(RESPONSAVEIS, card.avalQualidade.responsavelAvalInicial)}
           </select>
         </div>
         <div class="col-span-2">
@@ -3376,6 +3485,7 @@ function enviarEmailFormulacaoConcluida() {
 function renderAcaoForm(card, isNew) {
   return `
     <div class="space-y-4">
+      ${renderAvisoImportado(card)}
       <div class="grid grid-cols-2 gap-3">
         <div class="col-span-2">
           <label class="block text-xs font-semibold mb-1" style="color: var(--text-2);">TÍTULO DA AÇÃO *</label>
@@ -3399,13 +3509,13 @@ function renderAcaoForm(card, isNew) {
         <div>
           <label class="block text-xs font-semibold mb-1" style="color: var(--text-2);">SETOR</label>
           <select id="f_setor" class="input">
-            ${AREAS.map(a => `<option value="${a}" ${card.setor === a ? 'selected' : ''}>${a}</option>`).join('')}
+            ${opc(AREAS, card.setor)}
           </select>
         </div>
         <div>
           <label class="block text-xs font-semibold mb-1" style="color: var(--text-2);">RESPONSÁVEL</label>
           <select id="f_responsavel" class="input">
-            ${RESPONSAVEIS.map(r => `<option value="${r}" ${card.responsavel === r ? 'selected' : ''}>${r}</option>`).join('')}
+            ${opc(RESPONSAVEIS, card.responsavel)}
           </select>
         </div>
         <div>
@@ -3512,7 +3622,7 @@ function renderNCForm(card, isNew) {
         <div>
           <label class="block text-xs font-semibold mb-1" style="color: var(--text-2);">UNIDADE</label>
           <select id="f_nc_unidade" class="input">
-            ${UNIDADES.map(u => `<option value="${u}" ${card.registro.unidade === u ? 'selected' : ''}>${u}</option>`).join('')}
+            ${opc(UNIDADES, card.registro.unidade)}
           </select>
         </div>
         <div>
@@ -3547,21 +3657,21 @@ function renderNCForm(card, isNew) {
           <label class="block text-xs font-semibold mb-1" style="color: var(--text-2);">PROBLEMA MACRO</label>
           <select id="f_nc_problemaMacro" class="input">
             <option value="">— Selecionar —</option>
-            ${PROBLEMA_MACRO_NC.map(t => `<option value="${t}" ${card.registro.problemaMacro === t ? 'selected' : ''}>${t}</option>`).join('')}
+            ${opc(PROBLEMA_MACRO_NC, card.registro.problemaMacro)}
           </select>
         </div>
         <div>
           <label class="block text-xs font-semibold mb-1" style="color: var(--text-2);">NC (CLASSIFICAÇÃO DO ITEM)</label>
           <select id="f_nc_classificacaoNC" class="input">
             <option value="">— Selecionar —</option>
-            ${CLASSIFICACAO_NC.map(t => `<option value="${t}" ${card.registro.classificacaoNC === t ? 'selected' : ''}>${t}</option>`).join('')}
+            ${opc(CLASSIFICACAO_NC, card.registro.classificacaoNC)}
           </select>
         </div>
         <div>
           <label class="block text-xs font-semibold mb-1" style="color: var(--text-2);">TIPO DE NÃO CONFORMIDADE</label>
           <select id="f_nc_tipoNC" class="input">
             <option value="">— Selecionar —</option>
-            ${TIPOS_NC.map(t => `<option value="${t}" ${card.registro.tipoNC === t ? 'selected' : ''}>${t}</option>`).join('')}
+            ${opc(TIPOS_NC, card.registro.tipoNC)}
           </select>
         </div>
         <div>
@@ -3571,7 +3681,7 @@ function renderNCForm(card, isNew) {
         <div>
           <label class="block text-xs font-semibold mb-1" style="color: var(--text-2);">RESPONSÁVEL PELA DETECÇÃO</label>
           <select id="f_nc_responsavelDeteccao" class="input">
-            ${RESPONSAVEIS.map(r => `<option value="${r}" ${card.registro.responsavelDeteccao === r ? 'selected' : ''}>${r}</option>`).join('')}
+            ${opc(RESPONSAVEIS, card.registro.responsavelDeteccao)}
           </select>
         </div>
         <div class="col-span-2">
@@ -3616,7 +3726,7 @@ function renderNCForm(card, isNew) {
         <div>
           <label class="block text-xs font-semibold mb-1" style="color: var(--text-2);">RESPONSÁVEL PELO ENVIO</label>
           <select id="f_nc_responsavelEnvio" class="input">
-            ${RESPONSAVEIS.map(r => `<option value="${r}" ${card.envioFornecedor.responsavelEnvio === r ? 'selected' : ''}>${r}</option>`).join('')}
+            ${opc(RESPONSAVEIS, card.envioFornecedor.responsavelEnvio)}
           </select>
         </div>
         <div class="col-span-2">
@@ -3664,7 +3774,7 @@ function renderNCForm(card, isNew) {
           <label class="block text-xs font-semibold mb-1" style="color: var(--text-2);">DECISÃO DA UNIDADE SOBRE O PRODUTO NC</label>
           <select id="f_nc_decisaoUnidade" class="input">
             <option value="">— Selecionar —</option>
-            ${DECISOES_UNIDADE.map(d => `<option value="${d}" ${card.avaliacaoQualidade.decisaoUnidade === d ? 'selected' : ''}>${d}</option>`).join('')}
+            ${opc(DECISOES_UNIDADE, card.avaliacaoQualidade.decisaoUnidade)}
           </select>
         </div>
         <div class="col-span-2 p-3 rounded-md" style="background: var(--surface-2); border: 1px solid var(--border);">
@@ -3672,7 +3782,7 @@ function renderNCForm(card, isNew) {
           <div class="text-xs mb-2" style="color: var(--text-3);">Em caso de não conformidades encontradas em análise de níveis de garantia</div>
           <select id="f_nc_qtdParametrosFE" class="input">
             <option value="">— Selecionar —</option>
-            ${QTD_PARAMETROS_FE.map(q => `<option value="${q}" ${card.avaliacaoQualidade.qtdParametrosFE === q ? 'selected' : ''}>${q}</option>`).join('')}
+            ${opc(QTD_PARAMETROS_FE, card.avaliacaoQualidade.qtdParametrosFE)}
           </select>
         </div>
         <div class="col-span-2">
@@ -3905,7 +4015,7 @@ function renderSQMForm(card, isNew) {
           <label class="block text-xs font-semibold mb-1" style="color: var(--text-2);">UNIDADE</label>
           <select id="f_sqm_unidade" class="input">
             <option value="">— Selecionar —</option>
-            ${UNIDADES_SQM.map(u => `<option value="${u}" ${card.compras.unidade === u ? 'selected' : ''}>${u}</option>`).join('')}
+            ${opc(UNIDADES_SQM, card.compras.unidade)}
           </select>
         </div>
         <div class="col-span-2">
@@ -3915,7 +4025,7 @@ function renderSQMForm(card, isNew) {
         <div>
           <label class="block text-xs font-semibold mb-1" style="color: var(--text-2);">RESPONSÁVEL COMPRAS</label>
           <select id="f_sqm_responsavelCompras" class="input">
-            ${RESPONSAVEIS.map(r => `<option value="${r}" ${card.compras.responsavelCompras === r ? 'selected' : ''}>${r}</option>`).join('')}
+            ${opc(RESPONSAVEIS, card.compras.responsavelCompras)}
           </select>
         </div>
         ${faseAtual === 'compras' ? `
@@ -3961,7 +4071,7 @@ function renderSQMForm(card, isNew) {
           <label class="block text-xs font-semibold mb-1" style="color: var(--text-2);">ÁREA RESPONSÁVEL</label>
           <select id="f_sqm_areaResponsavel" class="input">
             <option value="">— Selecionar —</option>
-            ${AREAS.map(a => `<option value="${a}" ${card.acao.areaResponsavel === a ? 'selected' : ''}>${a}</option>`).join('')}
+            ${opc(AREAS, card.acao.areaResponsavel)}
           </select>
         </div>
         <div class="col-span-2">
@@ -4010,7 +4120,7 @@ function renderSQMForm(card, isNew) {
           <label class="block text-xs font-semibold mb-1" style="color: var(--text-2);">PRODUTO INDICADO PARA</label>
           <select id="f_sqm_produtoIndicado" class="input">
             <option value="">— Selecionar —</option>
-            ${PRODUTO_INDICADO.map(x => `<option value="${x}" ${card.formulacao.produtoIndicado === x ? 'selected' : ''}>${x}</option>`).join('')}
+            ${opc(PRODUTO_INDICADO, card.formulacao.produtoIndicado)}
           </select>
         </div>
         <div>
@@ -4090,7 +4200,7 @@ function renderSQMForm(card, isNew) {
         <div>
           <label class="block text-xs font-semibold mb-1" style="color: var(--text-2);">RESPONSÁVEL (QUALIDADE)</label>
           <select id="f_sqm_responsavelQualidade" class="input">
-            ${RESPONSAVEIS.map(r => `<option value="${r}" ${card.qualidadeSQM.responsavel === r ? 'selected' : ''}>${r}</option>`).join('')}
+            ${opc(RESPONSAVEIS, card.qualidadeSQM.responsavel)}
           </select>
         </div>
         <div>
@@ -4459,8 +4569,12 @@ function saveCard() {
       anexos,
     };
     if (isNew) {
-      const num = String(state.data.acoes.length + 1).padStart(4, '0');
-      card.id = 'A-' + num;
+      // Próximo número livre (antes usava a quantidade de ações e podia repetir um número)
+      const maior = state.data.acoes.reduce((m, a) => {
+        const n = /^A-(\d+)$/.exec(a.id || '');
+        return n ? Math.max(m, parseInt(n[1], 10)) : m;
+      }, 0);
+      card.id = 'A-' + String(maior + 1).padStart(4, '0');
       state.data.acoes.push(card);
     } else {
       const idx = state.data.acoes.findIndex(a => a.id === card.id);
@@ -4958,6 +5072,19 @@ function exportCSV(type) {
 function renderConfig() {
   return `
     <div class="p-6 overflow-y-auto h-full max-w-3xl">
+      ${ehAdmin() ? `
+      <div class="bg-white rounded-lg border p-5 mb-4" style="border-color: var(--border);">
+        <h3 class="font-bold mb-1">📥 Importar histórico</h3>
+        <p class="text-sm mb-3" style="color: var(--text-2);">
+          Envie o arquivo <span class="mono">rumi_importacao_pipefy.json</span>. Pode repetir sem medo:
+          cards que já existem são pulados, nada é duplicado nem sobrescrito.
+        </p>
+        <input type="file" id="arquivoImportacao" accept=".json" class="hidden" onchange="lerArquivoImportacao(event)">
+        <button onclick="document.getElementById('arquivoImportacao').click()" class="btn btn-secondary">
+          <i data-lucide="file-up" class="w-4 h-4"></i> Escolher arquivo
+        </button>
+        <div id="importacaoStatus" class="mt-3 text-sm"></div>
+      </div>` : ''}
       <!-- Backup -->
       <div class="bg-white rounded-lg border p-5 mb-4" style="border-color: var(--border);">
         <h3 class="font-bold mb-1">💾 Backup no OneDrive</h3>
