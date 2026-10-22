@@ -254,7 +254,7 @@
     
     <nav class="flex-1 p-3 space-y-0.5">
       <div class="px-3 py-2 text-xs uppercase tracking-wider font-semibold" style="color: var(--text-3);">Principal</div>
-      <button onclick="switchView('dashboard')" class="nav-item active w-full flex items-center gap-2.5 px-3 py-2 rounded-md text-sm" data-view="dashboard">
+      <button id="navDashboard" onclick="switchView('dashboard')" class="nav-item active w-full flex items-center gap-2.5 px-3 py-2 rounded-md text-sm hidden" data-view="dashboard">
         <i data-lucide="layout-dashboard" class="w-4 h-4"></i>
         Dashboard
       </button>
@@ -279,8 +279,9 @@
         <span class="badge" style="background: #CCFBF1; color: var(--teal);" id="sqmCount">0</span>
       </button>
       
+      <div id="navProcessosDinamicos"></div>
       <div class="px-3 py-2 mt-4 text-xs uppercase tracking-wider font-semibold" style="color: var(--text-3);">Análise</div>
-      <button onclick="switchView('relatorios')" class="nav-item w-full flex items-center gap-2.5 px-3 py-2 rounded-md text-sm" data-view="relatorios">
+      <button id="navRelatorios" onclick="switchView('relatorios')" class="nav-item w-full flex items-center gap-2.5 px-3 py-2 rounded-md text-sm hidden" data-view="relatorios">
         <i data-lucide="bar-chart-3" class="w-4 h-4"></i>
         Relatórios
       </button>
@@ -384,7 +385,7 @@
           <i data-lucide="search" class="w-4 h-4 absolute left-2.5 top-1/2 -translate-y-1/2" style="color: var(--text-3);"></i>
           <input id="searchInput" oninput="applyFilter()" type="text" placeholder="Buscar..." class="input pl-8 text-sm" style="width: 220px;">
         </div>
-        <button id="btnNew" onclick="openNewCardModal()" class="btn btn-primary">
+        <button id="btnNew" onclick="abrirNovoCard()" class="btn btn-primary">
           <i data-lucide="plus" class="w-4 h-4"></i>
           Novo
         </button>
@@ -520,17 +521,40 @@ const UNIDADES_SQM = ['SETE LAGOAS', 'BARRA DO GARÇAS', 'AMBAS'];
 const PRODUTO_INDICADO = ['Monogástricos', 'Ruminantes', 'Ambos'];
 const CATEGORIAS = ['Sistema ICT_IT System', 'Documentação', 'Produto Final', 'Intermediate Product (Produto Intermediário)', 'Rótulos', 'Sistema de Gestão', 'Monitoramento', 'Procedimento', 'Embalagem'];
 const TIPOS_DESVIO = ['Fora de Especificação', 'Controle em Processo (Ex: umidade PH no processo)', 'Sistema de Controle (Ex: Protheus, Pipefy, Gemba, Sig...)', 'Contaminação', 'Produção/Rendimento', 'Falha/Mau Funcionamento de Equipamento', 'Falha de Calibração', 'Material Vencido', 'Limite Excedido'];
-let RESPONSAVEIS = ['André Augusto'];
+let RESPONSAVEIS = ['André Augusto', 'Hadan Brito', 'José Amâncio', 'Priscilla Silva', 'Izabela Koh', 'Bruno Silva', 'Tâmara Paulista', 'Vanessa Chaves', 'Anna Castro', 'Keterine Coutinho', 'Marcos Felipe', 'Otavio Danilo', 'Leandro Francisco', 'Julia Mandu', 'Walterly Leal', 'Victor Imbuzeiro', 'Glaucia Silva', 'Cristiano Ribeiro', 'Carolina Pereira', 'Vinícius Porto', 'Luciano Luiz', 'Felipe Vinícius', 'Elizabeth Gonzaga', 'Gabriel Guds'];
 
 // Emails vinculados (para envio via mailto)
 // Cadastro de e-mails. As 4 primeiras chaves sao usadas pelos disparos
 // automaticos do sistema — mantenha elas. As pessoas voce cadastra nas Configuracoes.
 const EMAILS_EQUIPE = {
-  qualidade: 'andre.augusto@dsm-firmenich.com',
-  formulacao: 'andre.augusto@dsm-firmenich.com',
+  qualidade: 'priscilla.silva@dsm-firmenich.com',
+  formulacao: 'tamara.paulista@dsm-firmenich.com',
   comercial: 'andre.augusto@dsm-firmenich.com',
   gerencias: 'andre.augusto@dsm-firmenich.com',
   'André Augusto': 'andre.augusto@dsm-firmenich.com',
+  'Hadan Brito': 'hadan.brito@dsm-firmenich.com',
+  'José Amâncio': 'jose.amancio@dsm-firmenich.com',
+  'Priscilla Silva': 'priscilla.silva@dsm-firmenich.com',
+  'Izabela Koh': 'izabela.koh@dsm-firmenich.com',
+  'Bruno Silva': 'bruno.silva@dsm-firmenich.com',
+  'Tâmara Paulista': 'tamara.paulista@dsm-firmenich.com',
+  'Vanessa Chaves': 'vanessa.chaves@dsm-firmenich.com',
+  'Anna Castro': 'anna.castro@dsm-firmenich.com',
+  'Keterine Coutinho': 'keterine.coutinho@dsm-firmenich.com',
+  'Marcos Felipe': 'marcos.felipe@dsm-firmenich.com',
+  'Otavio Danilo': 'otavio.danilo@dsm-firmenich.com',
+  'Leandro Francisco': 'leandro.francisco@dsm-firmenich.com',
+  'Julia Mandu': 'julia.mandu@dsm-firmenich.com',
+  'Walterly Leal': 'walterly.leal@dsm-firmenich.com',
+  'Victor Imbuzeiro': 'victor.imbuzeiro@dsm-firmenich.com',
+  'Glaucia Silva': 'glaucia.silva@dsm-firmenich.com',
+  'Cristiano Ribeiro': 'cristiano.ribeiro@dsm-firmenich.com',
+  'Carolina Pereira': 'carolina.pereira@dsm-firmenich.com',
+  'Vinícius Porto': 'vinicius.porto@dsm-firmenich.com',
+  'Luciano Luiz': 'luciano.luiz@dsm-firmenich.com',
+  'Felipe Vinícius': 'felipe.vinicius@dsm-firmenich.com',
+  'Elizabeth Gonzaga': 'elizabeth.gonzaga@dsm-firmenich.com',
+  'Gabriel Guds': 'gabriel.guds@dsm-firmenich.com',
 };
 
 // Chaves que o sistema usa internamente (nao podem ser removidas)
@@ -912,14 +936,23 @@ const FIREBASE_CONFIG = {
 const DOMINIO_PERMITIDO = 'dsm-firmenich.com';
 
 // Quem pode abrir as Configurações (e alterar e-mails, responsáveis, regras)
+const EDITORES = ['elizabeth.gonzaga@dsm-firmenich.com','andre.augusto@dsm-firmenich.com','izabela.koh@dsm-firmenich.com','vanessa.chaves@dsm-firmenich.com','priscilla.silva@dsm-firmenich.com'];
+const APROVADOR_EXCLUSAO = 'priscilla.silva@dsm-firmenich.com';
+const USUARIOS_BG = ['elizabeth.gonzaga@dsm-firmenich.com','vanessa.chaves@dsm-firmenich.com'];
+const USUARIOS_DASHBOARD = ['andre.augusto@dsm-firmenich.com'];
 const ADMINS = ['andre.augusto@dsm-firmenich.com', 'priscilla.silva@dsm-firmenich.com'];
-function ehAdmin() {
-  return ADMINS.includes(String(state.currentUser?.email || '').toLowerCase());
-}
+function ehAdmin() { return ADMINS.includes(String(state.currentUser?.email||'').toLowerCase()); }
+function ehEditor() { return EDITORES.includes(String(state.currentUser?.email||'').toLowerCase()); }
+function ehAprovadorExclusao() { return String(state.currentUser?.email||'').toLowerCase()===APROVADOR_EXCLUSAO; }
+function veDashboard() { return USUARIOS_DASHBOARD.includes(String(state.currentUser?.email||'').toLowerCase()); }
+function unidadePadrao() { return USUARIOS_BG.includes(String(state.currentUser?.email||'').toLowerCase())?'BG':''; }
 function aplicarPermissoes() {
   const nav = document.getElementById('navConfig');
   if (nav) nav.classList.toggle('hidden', !ehAdmin());
-  if (!ehAdmin() && state.currentView === 'config') state.currentView = 'dashboard';
+  document.getElementById('navDashboard')?.classList.toggle('hidden', !veDashboard());
+  document.getElementById('navRelatorios')?.classList.toggle('hidden', !veDashboard());
+  if (!ehAdmin() && state.currentView === 'config') state.currentView = 'desvios';
+  if (!veDashboard() && (state.currentView === 'dashboard' || state.currentView === 'relatorios')) state.currentView = 'desvios';
 }
 
 // Senha inicial padrão (guardamos só a impressão digital dela, não a senha)
@@ -1742,6 +1775,7 @@ async function entrarNoApp(usuario) {
     || usuario.email.split('@')[0].split('.').map(s => s.charAt(0).toUpperCase() + s.slice(1)).join(' ');
   state.currentUser = { email: usuario.email, name: nome, uid: usuario.uid };
   aplicarPermissoes();
+  if (!filtroUnidade && unidadePadrao()) filtroUnidade = unidadePadrao();
 
   // Destrava os botões da tela de login
   const bE = document.getElementById('btnEntrar');
@@ -1846,6 +1880,131 @@ function enviarLinkPorEmail() {
 }
 
 // =================== NAVIGATION ===================
+// =================== PROCESSOS GENERICOS ===================
+function processosGenericos() { return state.data?._processosGen || []; }
+
+function renderNavProcessos() {
+  const el = document.getElementById('navProcessosDinamicos'); if (!el) return;
+  const procs = processosGenericos();
+  if (!procs.length && !ehEditor()) { el.innerHTML = ''; return; }
+  let h = '<div class="px-3 py-2 mt-4 text-xs uppercase tracking-wider font-semibold" style="color:var(--text-3);">Processos</div>';
+  procs.forEach(proc => {
+    const cnt = (state.data[proc.chave]||[]).filter(c=>c.fase!=='concluido').length;
+    h += `<button onclick="switchView('${proc.chave}')" class="nav-item w-full flex items-center gap-2.5 px-3 py-2 rounded-md text-sm" data-view="${proc.chave}"><i data-lucide="${proc.icone||'clipboard-list'}" class="w-4 h-4"></i><span class="flex-1 text-left">${escapeHtml(proc.nome)}</span><span class="badge" style="background:var(--accent-soft);color:var(--accent);">${cnt}</span></button>`;
+  });
+  if (ehEditor()) h += '<button onclick="criarProcessoGenerico()" class="w-full flex items-center gap-2.5 px-3 py-2 rounded-md text-xs hover:bg-gray-100" style="color:var(--text-3);"><i data-lucide="plus-circle" class="w-3.5 h-3.5"></i> Novo processo</button>';
+  el.innerHTML = h;
+}
+
+function criarProcessoGenerico() {
+  const nome = prompt('Nome do novo processo (ex: Inspeções, Calibrações):');
+  if (!nome || !nome.trim()) return;
+  const slug = nome.trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-z0-9]+/g,'_').replace(/_+$/,'');
+  const chave = 'gen_' + slug;
+  if (!state.data._processosGen) state.data._processosGen = [];
+  if (state.data._processosGen.some(p=>p.chave===chave)) { showToast('Ja existe.'); return; }
+  state.data._processosGen.push({ chave, nome: nome.trim(), icone: 'clipboard-list',
+    fases: [{ id:'aberto',label:'Aberto',color:'#2563EB',softBg:'#DBEAFE'},{ id:'andamento',label:'Em Andamento',color:'#D97706',softBg:'#FEF3C7'},{ id:'concluido',label:'Concluido',color:'#059669',softBg:'#D1FAE5'}],
+    criadoPor: state.currentUser?.email||'' });
+  state.data[chave] = [];
+  saveData(); showToast('"'+nome.trim()+'" criado.'); switchView(chave);
+}
+
+function excluirProcessoGenerico(chave) {
+  if (!ehAprovadorExclusao()) { showToast('So a Priscilla pode excluir processos.'); return; }
+  const proc = processosGenericos().find(p=>p.chave===chave); if (!proc) return;
+  if (!confirm('Excluir "'+proc.nome+'" e todos os cards?')) return;
+  state.data._processosGen = processosGenericos().filter(p=>p.chave!==chave);
+  delete state.data[chave]; saveData(); switchView('desvios');
+}
+
+function adicionarFaseGen(chave) {
+  const proc = processosGenericos().find(p=>p.chave===chave); if (!proc||!ehEditor()) return;
+  const nome = prompt('Nome da nova coluna:'); if (!nome||!nome.trim()) return;
+  const id = nome.trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-z0-9]+/g,'_');
+  if (proc.fases.some(f=>f.id===id)) { showToast('Ja existe.'); return; }
+  const cores = ['#2563EB','#7C3AED','#D97706','#059669','#DC2626','#0D9488','#4F46E5'];
+  const idx = proc.fases.findIndex(f=>f.id==='concluido');
+  proc.fases.splice(idx>=0?idx:proc.fases.length, 0, { id, label:nome.trim(), color:cores[proc.fases.length%cores.length], softBg:cores[proc.fases.length%cores.length]+'20' });
+  saveData(); render(); desenharIcones();
+}
+
+function removerFaseGen(chave, faseId) {
+  if (!ehAprovadorExclusao()) { showToast('So a Priscilla pode remover colunas.'); return; }
+  const proc = processosGenericos().find(p=>p.chave===chave); if (!proc) return;
+  if (['aberto','concluido'].includes(faseId)) { showToast('Aberto e Concluido sao fixas.'); return; }
+  const n = (state.data[chave]||[]).filter(c=>c.fase===faseId).length;
+  if (n && !confirm(n+' cards nessa coluna. Mover para Aberto?')) return;
+  (state.data[chave]||[]).filter(c=>c.fase===faseId).forEach(c=>{c.fase='aberto'});
+  proc.fases = proc.fases.filter(f=>f.id!==faseId); saveData(); render(); desenharIcones();
+}
+
+function renderKanbanGenerico(proc) {
+  const items = (state.data[proc.chave]||[]).filter(cardMatchUnidade);
+  const filtros = renderFiltroUnidade()
+    + (ehEditor() ? ' <button onclick="adicionarFaseGen(\''+proc.chave+'\')" class="btn-ghost px-2 py-1 rounded text-xs"><i data-lucide="plus-circle" class="w-3.5 h-3.5 inline"></i> Coluna</button>' : '')
+    + (ehAprovadorExclusao() ? ' <button onclick="excluirProcessoGenerico(\''+proc.chave+'\')" class="btn-ghost px-2 py-1 rounded text-xs text-red-500"><i data-lucide="trash-2" class="w-3.5 h-3.5 inline"></i> Excluir processo</button>' : '');
+  let cols = '';
+  proc.fases.forEach(fase => {
+    const fi = items.filter(i=>i.fase===fase.id);
+    const rmBtn = ehEditor()&&!['aberto','concluido'].includes(fase.id) ? `<button onclick="removerFaseGen('${proc.chave}','${fase.id}')" class="btn-ghost p-1 rounded flex-shrink-0 text-red-400" title="Remover"><i data-lucide="x" class="w-3 h-3"></i></button>` : '';
+    cols += `<div class="kanban-column flex-shrink-0 flex flex-col"><div class="coluna-header" style="--cor-fase:${fase.color};"><div class="flex items-center gap-2 min-w-0"><h3 class="font-semibold text-sm truncate" style="color:${fase.color};">${escapeHtml(fase.label)}</h3><span class="coluna-contador" style="background:${fase.softBg||'#eee'};color:${fase.color};">${fi.length}</span></div>${rmBtn}<button onclick="openGenCard(null,'${proc.chave}','${fase.id}')" class="btn-ghost p-1 rounded flex-shrink-0" title="Adicionar"><i data-lucide="plus" class="w-3.5 h-3.5"></i></button></div><div class="drop-zone coluna-corpo flex-1 p-2 space-y-2 overflow-y-auto kanban-scroll" data-fase="${fase.id}" data-type="${proc.chave}">${fi.length ? fi.map(c => `<div class="card-item cursor-pointer p-3 rounded-lg border bg-white" style="border-color:var(--border);" onclick="openGenCard('${c.id}','${proc.chave}')" draggable="true" data-id="${c.id}"><div class="font-semibold text-sm mb-1">${escapeHtml(c.titulo||'(sem titulo)')}</div><div class="flex items-center gap-2 text-xs" style="color:var(--text-3);">${c.responsavel?'<span>&#128100; '+escapeHtml(c.responsavel.split(' ')[0])+'</span>':''}${c.prazo?'<span>&#128197; '+c.prazo+'</span>':''}</div></div>`).join('') : '<div class="coluna-vazia">Nenhum card</div>'}</div></div>`;
+  });
+  return `<div class="h-full flex flex-col"><div class="bg-white border-b px-5 py-2.5 flex items-center gap-3 text-sm" style="border-color:var(--border);">${filtros}<div class="flex-1"></div><span class="text-xs" style="color:var(--text-3);">${items.length} cards</span></div><div class="flex-1 overflow-x-auto kanban-scroll p-4"><div class="flex gap-4 h-full">${cols}</div></div></div>`;
+}
+
+function openGenCard(id, chave, faseInicial) {
+  const proc = processosGenericos().find(p=>p.chave===chave); if (!proc) return;
+  state.editingType = chave;
+  const card = id ? (state.data[chave]||[]).find(c=>c.id===id)||{} : { fase: faseInicial||'aberto' };
+  state.editingCard = card;
+  const modal = document.getElementById('cardModal'); const body = document.getElementById('modalBody');
+  document.getElementById('modalTitle').textContent = card.titulo||'Novo card';
+  document.getElementById('modalSubtitle').textContent = card.id||'';
+  const isNew = !card.id;
+  body.innerHTML = `<div class="space-y-4"><div class="grid grid-cols-2 gap-3">
+    <div class="col-span-2"><label class="block text-xs font-semibold mb-1" style="color:var(--text-2);">TITULO *</label><input id="f_gen_titulo" class="input" value="${escapeHtml(card.titulo||'')}" placeholder="Titulo do card"></div>
+    <div><label class="block text-xs font-semibold mb-1" style="color:var(--text-2);">FASE</label><select id="f_gen_fase" class="input">${proc.fases.map(f=>'<option value="'+f.id+'"'+(card.fase===f.id?' selected':'')+'>'+escapeHtml(f.label)+'</option>').join('')}</select></div>
+    <div><label class="block text-xs font-semibold mb-1" style="color:var(--text-2);">RESPONSAVEL</label><select id="f_gen_responsavel" class="input"><option value="">-</option>${RESPONSAVEIS.map(r=>'<option value="'+escapeHtml(r)+'"'+(card.responsavel===r?' selected':'')+'>'+escapeHtml(r)+'</option>').join('')}</select></div>
+    <div><label class="block text-xs font-semibold mb-1" style="color:var(--text-2);">PRAZO</label><input id="f_gen_prazo" type="date" class="input" value="${card.prazo||''}"></div>
+    <div><label class="block text-xs font-semibold mb-1" style="color:var(--text-2);">UNIDADE</label><select id="f_gen_unidade" class="input"><option value="">-</option>${UNIDADES.map(u=>'<option value="'+u+'"'+(card.unidade===u?' selected':'')+'>'+u+'</option>').join('')}</select></div>
+    <div class="col-span-2"><label class="block text-xs font-semibold mb-1" style="color:var(--text-2);">DESCRICAO</label><textarea id="f_gen_descricao" class="input" rows="3">${escapeHtml(card.descricao||'')}</textarea></div>
+    <div class="col-span-2 flex justify-end"><button onclick="saveGenCard('${proc.chave}')" class="btn btn-primary"><i data-lucide="check" class="w-4 h-4"></i> Salvar</button></div>
+    </div></div>`;
+  document.getElementById('btnDelete')?.classList.toggle('hidden', isNew);
+  document.getElementById('btnsCompartilhar')?.classList.toggle('hidden', isNew);
+  modal.classList.remove('hidden'); modal.classList.add('flex'); desenharIcones();
+}
+
+function saveGenCard(chave) {
+  const proc = processosGenericos().find(p=>p.chave===chave); if (!proc) return;
+  const get = id => document.getElementById(id)?.value?.trim()||'';
+  const card = state.editingCard||{};
+  const isNew = !card.id;
+  card.titulo = get('f_gen_titulo'); card.fase = get('f_gen_fase')||'aberto';
+  card.responsavel = get('f_gen_responsavel'); card.prazo = get('f_gen_prazo');
+  card.unidade = get('f_gen_unidade'); card.descricao = get('f_gen_descricao');
+  card.registro = card.registro||{}; card.registro.unidade = card.unidade; card.registro.titulo = card.titulo;
+  if (isNew) {
+    const arr = state.data[chave] = state.data[chave]||[];
+    const maxN = arr.reduce((m,c)=>{const n=/(\d+)$/.exec(c.id||'');return n?Math.max(m,+n[1]):m},0);
+    card.id = chave.toUpperCase().replace(/^GEN_/,'').slice(0,6)+'-'+String(maxN+1).padStart(4,'0');
+    card.numero = card.id; card.criadoEm = new Date().toISOString(); arr.push(card);
+  } else {
+    const idx = (state.data[chave]||[]).findIndex(c=>c.id===card.id);
+    if (idx >= 0) state.data[chave][idx] = card;
+  }
+  enfileirar({ acao:'salvarCard', tipo:chave, card, versaoBase:card._versao||0 });
+  closeCardModal(); render(); desenharIcones(); showToast(isNew?'Card criado':'Salvo');
+}
+
+function abrirNovoCard() {
+  const proc = processosGenericos().find(pg=>pg.chave===state.currentView);
+  if (proc) { openGenCard(null, proc.chave, 'aberto'); return; }
+  openNewCardModal();
+}
+
+
 function switchView(view) {
   if (view === 'config' && !ehAdmin()) { showToast('Só administradores acessam as Configurações'); return; }
   state.currentView = view;
@@ -1921,7 +2080,20 @@ function render() {
       btnNew.style.display = 'none';
       container.innerHTML = renderConfig();
       break;
+    default: {
+      const _proc = processosGenericos().find(pg => pg.chave === state.currentView);
+      if (_proc) {
+        titleEl.textContent = _proc.nome;
+        subEl.textContent = (state.data[_proc.chave]||[]).filter(c=>c.fase!=='concluido').length + ' em aberto';
+        btnNew.style.display = 'inline-flex';
+        btnNew.innerHTML = '<i data-lucide="plus" class="w-4 h-4"></i> Novo card';
+        container.innerHTML = renderKanbanGenerico(_proc);
+        setupDragDrop(_proc.chave);
+      } else { state.currentView='desvios'; render(); return; }
+      break;
+    }
   }
+  renderNavProcessos();
   desenharIcones();
 }
 
@@ -2285,16 +2457,29 @@ function dataDoCard(c) {
     || c.dataLimite || c._atualizadoEm || '');
 }
 
+let filtroUnidade = '';
+function setFiltroUnidade(val) { filtroUnidade = val; render(); desenharIcones(); }
+function renderFiltroUnidade() {
+  return '<select onchange="setFiltroUnidade(this.value)" class="input text-xs" style="min-width:130px;padding:4px 8px;">'
+    +'<option value=""'+(!filtroUnidade?' selected':'')+'>Todas unidades</option>'
+    +'<option value="7L"'+(filtroUnidade==='7L'?' selected':'')+'>Sete Lagoas</option>'
+    +'<option value="BG"'+(filtroUnidade==='BG'?' selected':'')+'>Barra do Garças</option></select>';
+}
+function cardMatchUnidade(item) {
+  if (!filtroUnidade) return true;
+  const u = String(item.registro?.unidade||item.compras?.unidade||item.unidade||'').toLowerCase();
+  return filtroUnidade==='7L' ? (u.includes('sete lagoas')||u.includes('7l')) : (u.includes('barra')||u.includes('garças'));
+}
 function renderKanban(type) {
   const fases = getFasesByType(type);
   const items = getItemsByType(type);
-  const filtered = filterItems(items, state.filter, type);
+  const filtered = filterItems(items, state.filter, type).filter(cardMatchUnidade);
   
   return `
     <div class="h-full flex flex-col">
       <!-- Filter bar -->
       <div class="bg-white border-b px-5 py-2.5 flex items-center gap-3 text-sm" style="border-color: var(--border);">
-        <span class="text-xs font-semibold" style="color: var(--text-3);">FILTROS:</span>
+        ${renderFiltroUnidade()} <span class="text-xs font-semibold" style="color: var(--text-3);">FILTROS:</span>
         ${type === 'desvio' ? `
           <button onclick="setFilter('criticidade:1')" class="btn-ghost px-2 py-1 rounded text-xs">🔴 Críticos</button>
           <button onclick="setFilter('atraso')" class="btn-ghost px-2 py-1 rounded text-xs">⏰ Atrasados</button>
@@ -4732,14 +4917,18 @@ function saveCard() {
 }
 
 function deleteCard() {
-  if (modoSomenteLeitura) {
-    showToast('Card bloqueado — outra pessoa está editando');
-    return;
-  }
-  const type = state.editingType;
-  const card = state.editingCard;
+  if (modoSomenteLeitura) { showToast('Card bloqueado'); return; }
+  const type = state.editingType; const card = state.editingCard;
   if (!card || !card.id) return;
-  if (!confirm('Mover este card para a lixeira?\n\nEle sai do quadro mas fica guardado — dá pra restaurar depois.')) return;
+  if (!ehEditor() && !ehAprovadorExclusao()) { showToast('Você não tem permissão para excluir. Peça à Priscilla.'); return; }
+  if (!ehAprovadorExclusao()) {
+    if (!confirm('A exclusão precisa da aprovação de Priscilla Silva.\nDeseja solicitar?')) return;
+    const tit = card.registro?.titulo||card.compras?.produtoMP||card.titulo||'(sem título)';
+    sendEmail(APROVADOR_EXCLUSAO, '[Rumi] Solicitação exclusão — '+(card.numero||card.id),
+      'Solicitação de exclusão:\n\nCard: '+(card.numero||card.id)+'\nTítulo: '+tit+'\nPor: '+(state.currentUser?.name||state.currentUser?.email)+'\n\nPara aprovar, entre na Rumi e exclua.');
+    showToast('Solicitação enviada para a Priscilla.'); return;
+  }
+  if (!confirm('Mover para lixeira?\nFica guardado — dá pra restaurar.')) return;
 
   const id = card.id;
   if (type === 'desvio') state.data.desvios = state.data.desvios.filter(d => d.id !== id);
