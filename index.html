@@ -139,6 +139,9 @@
   .stat-pill strong { font-weight: 700; }
   .no-scrollbar::-webkit-scrollbar { display: none; }
   .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+  input[type=checkbox] { accent-color: var(--accent); }
+  .barra-filtros { overflow-x: auto; }
+  .barra-filtros > * { flex-shrink: 0; white-space: nowrap; }
   .menu-item {
     width: 100%; display: flex; align-items: center; gap: 10px; color: var(--text);
     padding: 9px 16px; font-size: 13.5px; text-align: left;
@@ -557,6 +560,10 @@ const EMAILS_EQUIPE = {
   'Gabriel Guds': 'gabriel.guds@dsm-firmenich.com',
 };
 
+// Equipe completa de fábrica (usada para completar a lista salva nas Configurações)
+const RESPONSAVEIS_PADRAO = RESPONSAVEIS.slice();
+const EMAILS_PADRAO = { ...EMAILS_EQUIPE };
+
 // Chaves que o sistema usa internamente (nao podem ser removidas)
 const CHAVES_FIXAS = ['qualidade', 'formulacao', 'comercial', 'gerencias'];
 const ROTULOS_CHAVES = {
@@ -936,23 +943,32 @@ const FIREBASE_CONFIG = {
 const DOMINIO_PERMITIDO = 'dsm-firmenich.com';
 
 // Quem pode abrir as Configurações (e alterar e-mails, responsáveis, regras)
-const EDITORES = ['elizabeth.gonzaga@dsm-firmenich.com','andre.augusto@dsm-firmenich.com','izabela.koh@dsm-firmenich.com','vanessa.chaves@dsm-firmenich.com','priscilla.silva@dsm-firmenich.com'];
-const APROVADOR_EXCLUSAO = 'priscilla.silva@dsm-firmenich.com';
-const USUARIOS_BG = ['elizabeth.gonzaga@dsm-firmenich.com','vanessa.chaves@dsm-firmenich.com'];
-const USUARIOS_DASHBOARD = ['andre.augusto@dsm-firmenich.com'];
+// ===== PERMISSÕES (o administrador escolhe as pessoas em Configurações → Permissões) =====
 const ADMINS = ['andre.augusto@dsm-firmenich.com', 'priscilla.silva@dsm-firmenich.com'];
-function ehAdmin() { return ADMINS.includes(String(state.currentUser?.email||'').toLowerCase()); }
-function ehEditor() { return EDITORES.includes(String(state.currentUser?.email||'').toLowerCase()); }
-function ehAprovadorExclusao() { return String(state.currentUser?.email||'').toLowerCase()===APROVADOR_EXCLUSAO; }
-function veDashboard() { return USUARIOS_DASHBOARD.includes(String(state.currentUser?.email||'').toLowerCase()); }
-function unidadePadrao() { return USUARIOS_BG.includes(String(state.currentUser?.email||'').toLowerCase())?'BG':''; }
+const PERMISSOES_PADRAO = {
+  editores: ['elizabeth.gonzaga@dsm-firmenich.com', 'andre.augusto@dsm-firmenich.com', 'izabela.koh@dsm-firmenich.com',
+             'vanessa.chaves@dsm-firmenich.com', 'priscilla.silva@dsm-firmenich.com'],
+  excluir: ['priscilla.silva@dsm-firmenich.com', 'andre.augusto@dsm-firmenich.com'],
+  dashboard: ['andre.augusto@dsm-firmenich.com'],
+};
+const USUARIOS_BG = ['elizabeth.gonzaga@dsm-firmenich.com', 'vanessa.chaves@dsm-firmenich.com'];
+function meuEmail() { return String(state.currentUser?.email || '').toLowerCase(); }
+function permissoes() {
+  const p = (state.data && state.data._config && state.data._config.permissoes) || {};
+  const lista = k => Array.isArray(p[k]) ? p[k].map(e => String(e).toLowerCase()) : PERMISSOES_PADRAO[k].slice();
+  return { editores: lista('editores'), excluir: lista('excluir'), dashboard: lista('dashboard') };
+}
+function ehAdmin() { return ADMINS.includes(meuEmail()); }
+function ehEditor() { return ehAdmin() || permissoes().editores.includes(meuEmail()); }
+function podeExcluir() { return ehAdmin() || permissoes().excluir.includes(meuEmail()); }
+function veDashboard() { return podeVerAba('dashboard'); }
+function unidadePadrao() { return USUARIOS_BG.includes(meuEmail()) ? 'BG' : ''; }
 function aplicarPermissoes() {
-  const nav = document.getElementById('navConfig');
-  if (nav) nav.classList.toggle('hidden', !ehAdmin());
-  document.getElementById('navDashboard')?.classList.toggle('hidden', !veDashboard());
-  document.getElementById('navRelatorios')?.classList.toggle('hidden', !veDashboard());
-  if (!ehAdmin() && state.currentView === 'config') state.currentView = 'desvios';
-  if (!veDashboard() && (state.currentView === 'dashboard' || state.currentView === 'relatorios')) state.currentView = 'desvios';
+  document.querySelectorAll('nav .nav-item[data-view]').forEach(el => {
+    const v = el.dataset.view;
+    el.classList.toggle('hidden', !podeVerAba(v));
+  });
+  if (!podeVerAba(state.currentView)) state.currentView = primeiraAbaVisivel();
 }
 
 // Senha inicial padrão (guardamos só a impressão digital dela, não a senha)
@@ -1076,6 +1092,9 @@ function enfileirar(operacao) {
     const chave = operacao.tipo + ':' + operacao.card.id;
     filaEnvio = filaEnvio.filter(o => !(o.acao === 'salvarCard' && (o.tipo + ':' + o.card.id) === chave));
   }
+  if (operacao.acao === 'salvarConfig') {
+    filaEnvio = filaEnvio.filter(o => o.acao !== 'salvarConfig');
+  }
   if (operacao.acao === 'excluirCard') {
     const chave = operacao.tipo + ':' + operacao.id;
     filaEnvio = filaEnvio.filter(o => {
@@ -1130,6 +1149,13 @@ async function processarFila() {
         continue;
       }
 
+      if (r && r.semPermissao) {
+        filaEnvio.shift();
+        gravarFila();
+        showToast(r.erro || 'Você não tem permissão para essa alteração.');
+        continue;
+      }
+
       // Erro do servidor: tenta de novo com espera crescente
       op._tentativas++;
       if (op._tentativas >= MAX_TENTATIVAS) {
@@ -1165,6 +1191,7 @@ function montarRequisicao(op) {
     };
   }
   if (op.acao === 'excluirCard') return { acao: 'excluirCard', tipo: op.tipo, id: op.id };
+  if (op.acao === 'salvarConfig') return { acao: 'salvarConfig', contadores: { _config: state.data._config || {} } };
   return { ...op };
 }
 
@@ -1215,7 +1242,7 @@ function tratarConflito(op, r) {
 
 // ====== CARREGAR ======
 
-const CHAVES_TIPO = { desvio: 'desvios', acao: 'acoes', nc: 'nc', sqm: 'sqm', lixeira: 'lixeira' };
+const CHAVES_TIPO = { desvio: 'desvios', acao: 'acoes', nc: 'nc', sqm: 'sqm', lixeira: 'lixeira', generico: 'generico', estrutura: 'estrutura' };
 
 // Migração leve de fases antigas para o layout novo (não perde cards).
 // Roda no carregamento; se o card for editado, a nova fase é salva no servidor.
@@ -1232,12 +1259,15 @@ function normalizarFaseCard(tipoCurto, card) {
 }
 function normalizarDados(dados) {
   if (!dados) return dados;
+  dados.generico = dados.generico || [];
+  dados.estrutura = dados.estrutura || [];
   (dados.desvios || []).forEach(c => normalizarFaseCard('desvio', c));
   (dados.sqm || []).forEach(c => normalizarFaseCard('sqm', c));
   return dados;
 }
 
 async function carregarDados() {
+  processosAntigosDoCache = lerProcessosAntigos();
   if (!apiConfigurada()) {
     marcarStatusSync('local');
     return carregarCacheLocal();
@@ -1276,12 +1306,23 @@ async function carregarDados() {
   }
 }
 
+let configMescladaAgora = false;
 function aplicarConfigSalva(dados) {
   if (!dados || !dados._config) return;
-  if (dados._config.emailsEquipe) Object.assign(EMAILS_EQUIPE, dados._config.emailsEquipe);
-  if (Array.isArray(dados._config.responsaveis) && dados._config.responsaveis.length) {
-    RESPONSAVEIS = dados._config.responsaveis.slice();
+  const cfg = dados._config;
+  if (Array.isArray(cfg.responsaveis) && cfg.responsaveis.length && !cfg.equipePadraoMesclada) {
+    // Primeira vez com a equipe completa: junta quem já estava salvo com as pessoas novas
+    const uniao = cfg.responsaveis.slice();
+    RESPONSAVEIS_PADRAO.forEach(n => { if (!uniao.includes(n)) uniao.push(n); });
+    cfg.responsaveis = uniao;
+    const emailsPessoas = {};
+    RESPONSAVEIS_PADRAO.forEach(n => { if (EMAILS_PADRAO[n]) emailsPessoas[n] = EMAILS_PADRAO[n]; });
+    cfg.emailsEquipe = { ...emailsPessoas, ...(cfg.emailsEquipe || {}) };
+    cfg.equipePadraoMesclada = true;
+    configMescladaAgora = true;
   }
+  if (cfg.emailsEquipe) Object.assign(EMAILS_EQUIPE, cfg.emailsEquipe);
+  if (Array.isArray(cfg.responsaveis) && cfg.responsaveis.length) RESPONSAVEIS = cfg.responsaveis.slice();
 }
 
 function carregarCacheLocal() {
@@ -1788,6 +1829,8 @@ async function entrarNoApp(usuario) {
   document.getElementById('app').classList.add('flex');
 
   state.data = await carregarDados();
+  migrarProcessosAntigos();
+  if (configMescladaAgora && ehAdmin()) { configMescladaAgora = false; salvarConfigServidor(); }
   state.data.lixeira = state.data.lixeira || [];
   atualizarIdentidadeUsuario();
   render();
@@ -1837,12 +1880,15 @@ function abrirCardDaURL() {
     { tipo: 'acao',   lista: state.data.acoes   || [], view: 'acoes' },
     { tipo: 'nc',     lista: state.data.nc      || [], view: 'nc' },
     { tipo: 'sqm',    lista: state.data.sqm     || [], view: 'sqm' },
+    { tipo: 'generico', lista: state.data.generico || [], view: null },
   ];
 
   for (const m of mapa) {
     const card = m.lista.find(c => c.id === alvo || c.numero === alvo);
     if (card) {
-      switchView(m.view);
+      const view = m.view || ('proc:' + card.processo);
+      if (!podeVerAba(view)) { showToast('Você não tem acesso a esse card.'); return; }
+      switchView(view);
       setTimeout(() => openCard(card.id, m.tipo), 250);
       return;
     }
@@ -1880,133 +1926,465 @@ function enviarLinkPorEmail() {
 }
 
 // =================== NAVIGATION ===================
-// =================== PROCESSOS GENERICOS ===================
-function processosGenericos() { return state.data?._processosGen || []; }
+// =================== ESTRUTURA: PROCESSOS NOVOS E COLUNAS EXTRAS ===================
+// Tudo fica salvo no servidor (tipo "estrutura"), então todo mundo vê o mesmo quadro.
+const CORES_COLUNA = [
+  ['#2563EB', '#DBEAFE'], ['#7C3AED', '#EDE9FE'], ['#D97706', '#FEF3C7'], ['#0D9488', '#CCFBF1'],
+  ['#DB2777', '#FCE7F3'], ['#4F46E5', '#E0E7FF'], ['#059669', '#D1FAE5'],
+];
+// Colunas que fazem parte do processo e não podem ser removidas
+const FASES_FIXAS = {
+  desvio: ['registro', 'avalQualidade', 'avalFormulacao', 'concluido'],
+  acao: ['aberto', 'concluido'],
+  generico: ['aberto', 'concluido'],
+};
+
+function estrutura() { return (state.data && state.data.estrutura) || []; }
+function processosAtivos() { return estrutura().filter(e => e.kind === 'processo'); }
+function procAtualId() {
+  const v = String(state.currentView || '');
+  return v.startsWith('proc:') ? v.slice(5) : null;
+}
+function procAtual() { const id = procAtualId(); return id ? processosAtivos().find(p => p.id === id) || null : null; }
+function procDoCard(card) {
+  return processosAtivos().find(p => p.id === (card && card.processo)) || procAtual();
+}
+function configQuadro(tipo) {
+  return estrutura().find(e => e.kind === 'quadro' && e.tipoQuadro === tipo) || null;
+}
+function novoConfigQuadro(tipo) {
+  return { id: 'QUADRO-' + tipo, numero: 'QUADRO-' + tipo, kind: 'quadro', tipoQuadro: tipo, fase: 'ativo', extras: [], ocultas: [] };
+}
+function slugTexto(t) {
+  return String(t).trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '') || 'item';
+}
+function idUnico(prefixo) {
+  return prefixo + Date.now().toString(36).toUpperCase() + Math.random().toString(36).slice(2, 5).toUpperCase();
+}
+
+// Junta as colunas de fábrica com as colunas criadas pelos editores (entram antes de "Concluído")
+function fasesComExtras(base, tipo) {
+  const cfg = configQuadro(tipo);
+  if (!cfg) return base;
+  const ocultas = cfg.ocultas || [];
+  const lista = base.filter(f => !ocultas.includes(f.id));
+  const iFim = lista.findIndex(f => f.id === 'concluido');
+  const pos = iFim >= 0 ? iFim : lista.length;
+  return lista.slice(0, pos).concat(cfg.extras || [], lista.slice(pos));
+}
+
+function salvarEstrutura(reg) {
+  const arr = state.data.estrutura = state.data.estrutura || [];
+  const i = arr.findIndex(e => e.id === reg.id);
+  if (i >= 0) arr[i] = { ...arr[i], ...reg }; else arr.push(reg);
+  saveData();
+  enviarCard('estrutura', i >= 0 ? arr[i] : reg);
+}
+
+// ----- Colunas -----
+function adicionarColuna(tipo) {
+  if (!ehEditor()) { showToast('Você não tem permissão para mudar colunas.'); return; }
+  const nome = prompt('Nome da nova coluna:');
+  if (!nome || !nome.trim()) return;
+  const atuais = getFasesByType(tipo);
+  if (atuais.some(f => f.label.toLowerCase() === nome.trim().toLowerCase())) { showToast('Já existe uma coluna com esse nome.'); return; }
+  let id = 'c_' + slugTexto(nome);
+  while (atuais.some(f => f.id === id)) id += '_';
+  const [cor, suave] = CORES_COLUNA[atuais.length % CORES_COLUNA.length];
+  const nova = { id, label: nome.trim(), color: cor, softBg: suave };
+  if (tipo === 'generico') {
+    const proc = procAtual(); if (!proc) return;
+    const reg = JSON.parse(JSON.stringify(proc));
+    const iFim = reg.fases.findIndex(f => f.id === 'concluido');
+    reg.fases.splice(iFim >= 0 ? iFim : reg.fases.length, 0, nova);
+    salvarEstrutura(reg);
+  } else {
+    const reg = JSON.parse(JSON.stringify(configQuadro(tipo) || novoConfigQuadro(tipo)));
+    reg.extras = (reg.extras || []).concat([nova]);
+    salvarEstrutura(reg);
+  }
+  render(); desenharIcones();
+  showToast('Coluna "' + nome.trim() + '" criada.');
+}
+
+function podeRemoverColuna(tipo, faseId) {
+  if (!podeExcluir() || !FASES_FIXAS[tipo]) return false;
+  return !FASES_FIXAS[tipo].includes(faseId);
+}
+
+function removerColuna(tipo, faseId) {
+  if (!podeExcluir()) { showToast('Você não tem permissão para excluir colunas.'); return; }
+  if (!podeRemoverColuna(tipo, faseId)) { showToast('Essa coluna faz parte do processo e não pode ser removida.'); return; }
+  const itens = tipo === 'generico'
+    ? (state.data.generico || []).filter(c => c.processo === procAtualId() && c.fase === faseId)
+    : getItemsByType(tipo).filter(c => c.fase === faseId);
+  if (itens.length) { showToast('Mova os ' + itens.length + ' card(s) dessa coluna antes de removê-la.'); return; }
+  const label = (getFasesByType(tipo).find(f => f.id === faseId) || {}).label || faseId;
+  if (!confirm('Remover a coluna "' + label + '"?')) return;
+  if (tipo === 'generico') {
+    const reg = JSON.parse(JSON.stringify(procAtual()));
+    reg.fases = reg.fases.filter(f => f.id !== faseId);
+    salvarEstrutura(reg);
+  } else {
+    const reg = JSON.parse(JSON.stringify(configQuadro(tipo) || novoConfigQuadro(tipo)));
+    if ((reg.extras || []).some(f => f.id === faseId)) reg.extras = reg.extras.filter(f => f.id !== faseId);
+    else reg.ocultas = Array.from(new Set((reg.ocultas || []).concat([faseId])));
+    salvarEstrutura(reg);
+  }
+  render(); desenharIcones();
+  showToast('Coluna "' + label + '" removida.');
+}
+
+function mostrarColunasOcultas(tipo) {
+  if (!ehEditor()) return;
+  const reg = JSON.parse(JSON.stringify(configQuadro(tipo) || novoConfigQuadro(tipo)));
+  reg.ocultas = [];
+  salvarEstrutura(reg);
+  render(); desenharIcones();
+}
+
+function renderBotoesEstrutura(tipo) {
+  if (!FASES_FIXAS[tipo]) return '';
+  let h = '';
+  if (ehEditor()) {
+    h += `<button onclick="adicionarColuna('${tipo}')" class="btn-ghost px-2 py-1 rounded text-xs" title="Criar uma coluna nova neste quadro"><i data-lucide="plus-square" class="w-3.5 h-3.5 inline"></i> Coluna</button>`;
+    const cfg = tipo !== 'generico' ? configQuadro(tipo) : null;
+    if (cfg && (cfg.ocultas || []).length) {
+      h += `<button onclick="mostrarColunasOcultas('${tipo}')" class="btn-ghost px-2 py-1 rounded text-xs">Mostrar colunas ocultas (${cfg.ocultas.length})</button>`;
+    }
+    if (tipo === 'generico') {
+      h += `<button onclick="renomearProcesso()" class="btn-ghost px-2 py-1 rounded text-xs"><i data-lucide="pencil" class="w-3.5 h-3.5 inline"></i> Renomear</button>`;
+    }
+  }
+  if (tipo === 'generico' && podeExcluir()) {
+    h += `<button onclick="excluirProcesso()" class="btn-ghost px-2 py-1 rounded text-xs" style="color: var(--danger);"><i data-lucide="trash-2" class="w-3.5 h-3.5 inline"></i> Excluir processo</button>`;
+  }
+  return h;
+}
+
+// ----- Processos (itens novos do menu) -----
+function criarProcesso() {
+  if (!ehEditor()) { showToast('Você não tem permissão para criar processos.'); return; }
+  const nome = prompt('Nome do novo processo (ex.: Inspeções, Calibrações):');
+  if (!nome || !nome.trim()) return;
+  if (processosAtivos().some(p => p.nome.toLowerCase() === nome.trim().toLowerCase())) { showToast('Já existe um processo com esse nome.'); return; }
+  const id = 'P-' + slugTexto(nome).slice(0, 20) + '-' + Date.now().toString(36);
+  const reg = {
+    id, numero: id, kind: 'processo', fase: 'ativo', nome: nome.trim(), icone: 'clipboard-list',
+    fases: [
+      { id: 'aberto', label: 'Aberto', color: '#2563EB', softBg: '#DBEAFE' },
+      { id: 'andamento', label: 'Em andamento', color: '#D97706', softBg: '#FEF3C7' },
+      { id: 'concluido', label: 'Concluído', color: '#059669', softBg: '#D1FAE5' },
+    ],
+    criadoPor: meuEmail(), criadoEm: new Date().toISOString(),
+  };
+  salvarEstrutura(reg);
+  switchView('proc:' + id);
+  showToast('Processo "' + reg.nome + '" criado.');
+}
+
+function renomearProcesso() {
+  const proc = procAtual();
+  if (!proc || !ehEditor()) return;
+  const nome = prompt('Novo nome do processo:', proc.nome);
+  if (!nome || !nome.trim() || nome.trim() === proc.nome) return;
+  const reg = JSON.parse(JSON.stringify(proc));
+  reg.nome = nome.trim();
+  salvarEstrutura(reg);
+  render(); desenharIcones();
+}
+
+function excluirProcesso() {
+  const proc = procAtual();
+  if (!proc) return;
+  if (!podeExcluir()) { showToast('Você não tem permissão para excluir processos.'); return; }
+  const cards = (state.data.generico || []).filter(c => c.processo === proc.id);
+  if (!confirm('Excluir o processo "' + proc.nome + '"' + (cards.length ? ' e os ' + cards.length + ' card(s) dele' : '') + '?\n\nNão dá para desfazer.')) return;
+  cards.forEach(c => enviarExclusao('generico', c.id));
+  state.data.generico = (state.data.generico || []).filter(c => c.processo !== proc.id);
+  state.data.estrutura = estrutura().filter(e => e.id !== proc.id);
+  enviarExclusao('estrutura', proc.id);
+  saveData();
+  switchView(primeiraAbaVisivel());
+  showToast('Processo "' + proc.nome + '" excluído.');
+}
 
 function renderNavProcessos() {
-  const el = document.getElementById('navProcessosDinamicos'); if (!el) return;
-  const procs = processosGenericos();
+  const el = document.getElementById('navProcessosDinamicos');
+  if (!el || !state.data) return;
+  const procs = processosAtivos().filter(p => podeVerAba('proc:' + p.id));
   if (!procs.length && !ehEditor()) { el.innerHTML = ''; return; }
-  let h = '<div class="px-3 py-2 mt-4 text-xs uppercase tracking-wider font-semibold" style="color:var(--text-3);">Processos</div>';
-  procs.forEach(proc => {
-    const cnt = (state.data[proc.chave]||[]).filter(c=>c.fase!=='concluido').length;
-    h += `<button onclick="switchView('${proc.chave}')" class="nav-item w-full flex items-center gap-2.5 px-3 py-2 rounded-md text-sm" data-view="${proc.chave}"><i data-lucide="${proc.icone||'clipboard-list'}" class="w-4 h-4"></i><span class="flex-1 text-left">${escapeHtml(proc.nome)}</span><span class="badge" style="background:var(--accent-soft);color:var(--accent);">${cnt}</span></button>`;
+  let h = '<div class="px-3 py-2 mt-4 text-xs uppercase tracking-wider font-semibold" style="color: var(--text-3);">Processos</div>';
+  procs.forEach(p => {
+    const n = (state.data.generico || []).filter(c => c.processo === p.id && c.fase !== 'concluido').length;
+    const ativo = state.currentView === 'proc:' + p.id;
+    h += `<button onclick="switchView('proc:${p.id}')" class="nav-item${ativo ? ' active' : ''} w-full flex items-center gap-2.5 px-3 py-2 rounded-md text-sm" data-view="proc:${p.id}">
+        <i data-lucide="${p.icone || 'clipboard-list'}" class="w-4 h-4"></i>
+        <span class="flex-1 text-left truncate">${escapeHtml(p.nome)}</span>
+        <span class="badge" style="background: var(--accent-soft); color: var(--accent);">${n}</span>
+      </button>`;
   });
-  if (ehEditor()) h += '<button onclick="criarProcessoGenerico()" class="w-full flex items-center gap-2.5 px-3 py-2 rounded-md text-xs hover:bg-gray-100" style="color:var(--text-3);"><i data-lucide="plus-circle" class="w-3.5 h-3.5"></i> Novo processo</button>';
+  if (ehEditor()) {
+    h += `<button onclick="criarProcesso()" class="nav-item w-full flex items-center gap-2.5 px-3 py-2 rounded-md text-sm" style="color: var(--text-3);">
+        <i data-lucide="plus-circle" class="w-4 h-4"></i> Novo processo
+      </button>`;
+  }
   el.innerHTML = h;
 }
 
-function criarProcessoGenerico() {
-  const nome = prompt('Nome do novo processo (ex: Inspeções, Calibrações):');
-  if (!nome || !nome.trim()) return;
-  const slug = nome.trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-z0-9]+/g,'_').replace(/_+$/,'');
-  const chave = 'gen_' + slug;
-  if (!state.data._processosGen) state.data._processosGen = [];
-  if (state.data._processosGen.some(p=>p.chave===chave)) { showToast('Ja existe.'); return; }
-  state.data._processosGen.push({ chave, nome: nome.trim(), icone: 'clipboard-list',
-    fases: [{ id:'aberto',label:'Aberto',color:'#2563EB',softBg:'#DBEAFE'},{ id:'andamento',label:'Em Andamento',color:'#D97706',softBg:'#FEF3C7'},{ id:'concluido',label:'Concluido',color:'#059669',softBg:'#D1FAE5'}],
-    criadoPor: state.currentUser?.email||'' });
-  state.data[chave] = [];
-  saveData(); showToast('"'+nome.trim()+'" criado.'); switchView(chave);
+// ----- Cards dos processos novos -----
+function renderCardGenerico(item) {
+  const trava = seloEditando('generico', item.id);
+  const unidadeCurta = (item.unidade || '').split(' - ')[1] || item.unidade || '';
+  const dias = item.prazo ? daysUntil(item.prazo) : null;
+  const atrasado = dias !== null && dias < 0 && item.fase !== 'concluido';
+  return `
+    <div class="card-item relative bg-white rounded-md p-3 border card-shadow${trava.classe}" style="border-color: var(--border);"
+         draggable="true" data-id="${item.id}" onclick="openCard('${item.id}', 'generico')">
+      <div class="flex items-center gap-1 mb-1.5 flex-wrap">
+        ${trava.selo}
+        ${unidadeCurta ? `<span class="tag" style="background: var(--surface-2); color: var(--text-2);">${escapeHtml(unidadeCurta)}</span>` : ''}
+        ${atrasado ? `<span class="tag" style="background: var(--danger-soft); color: var(--danger);">${-dias}d atraso</span>` : ''}
+      </div>
+      <div class="text-sm font-medium mb-1.5 line-clamp-2">${escapeHtml(item.titulo || '(sem título)')}</div>
+      <div class="text-xs mono mb-2" style="color: var(--text-3);">${escapeHtml(item.numero || item.id)}</div>
+      <div class="flex items-center justify-between text-xs" style="color: var(--text-3);">
+        <div class="flex items-center gap-1"><i data-lucide="user" class="w-3 h-3"></i><span>${escapeHtml((item.responsavel || '—').split(' ')[0])}</span></div>
+        ${item.prazo ? `<div class="flex items-center gap-1"><i data-lucide="calendar" class="w-3 h-3"></i><span>${formatDate(item.prazo)}</span></div>` : ''}
+      </div>
+    </div>`;
 }
 
-function excluirProcessoGenerico(chave) {
-  if (!ehAprovadorExclusao()) { showToast('So a Priscilla pode excluir processos.'); return; }
-  const proc = processosGenericos().find(p=>p.chave===chave); if (!proc) return;
-  if (!confirm('Excluir "'+proc.nome+'" e todos os cards?')) return;
-  state.data._processosGen = processosGenericos().filter(p=>p.chave!==chave);
-  delete state.data[chave]; saveData(); switchView('desvios');
+function renderGenericoForm(card, isNew) {
+  const proc = procDoCard(card);
+  const fases = (proc && proc.fases) || [];
+  const faseSel = card.fase || (fases[0] && fases[0].id) || 'aberto';
+  const rot = t => `<label class="block text-xs font-semibold mb-1" style="color: var(--text-2);">${t}</label>`;
+  return `
+    <div class="space-y-4">
+      <div class="p-3 rounded-lg flex items-center justify-between gap-3" style="background: var(--surface-2);">
+        <div>
+          <div class="text-xs" style="color: var(--text-3);">Processo</div>
+          <div class="font-semibold">${escapeHtml(proc ? proc.nome : '—')}</div>
+        </div>
+        <div>
+          ${rot('FASE')}
+          <select id="f_fase" class="input" style="min-width: 170px;">
+            ${fases.map(f => `<option value="${f.id}" ${faseSel === f.id ? 'selected' : ''}>${escapeHtml(f.label)}</option>`).join('')}
+          </select>
+        </div>
+      </div>
+      <div class="grid grid-cols-2 gap-3">
+        <div class="col-span-2">${rot('TÍTULO *')}
+          <input id="f_gen_titulo" class="input" value="${escapeHtml(card.titulo || '')}" placeholder="O que precisa ser feito ou acompanhado">
+        </div>
+        <div>${rot('RESPONSÁVEL')}
+          <select id="f_gen_responsavel" class="input"><option value="">— Selecionar —</option>${opc(RESPONSAVEIS, card.responsavel || '')}</select>
+        </div>
+        <div>${rot('PRAZO')}
+          <input id="f_gen_prazo" type="date" class="input" value="${card.prazo || ''}">
+        </div>
+        <div>${rot('UNIDADE')}
+          <select id="f_gen_unidade" class="input"><option value="">— Selecionar —</option>${opc(UNIDADES, card.unidade || '')}</select>
+        </div>
+        <div class="col-span-2">${rot('DESCRIÇÃO')}
+          <textarea id="f_gen_descricao" class="input" rows="4" placeholder="Detalhes, contexto, próximos passos">${escapeHtml(card.descricao || '')}</textarea>
+        </div>
+        ${renderAnexosSection()}
+      </div>
+    </div>`;
 }
 
-function adicionarFaseGen(chave) {
-  const proc = processosGenericos().find(p=>p.chave===chave); if (!proc||!ehEditor()) return;
-  const nome = prompt('Nome da nova coluna:'); if (!nome||!nome.trim()) return;
-  const id = nome.trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-z0-9]+/g,'_');
-  if (proc.fases.some(f=>f.id===id)) { showToast('Ja existe.'); return; }
-  const cores = ['#2563EB','#7C3AED','#D97706','#059669','#DC2626','#0D9488','#4F46E5'];
-  const idx = proc.fases.findIndex(f=>f.id==='concluido');
-  proc.fases.splice(idx>=0?idx:proc.fases.length, 0, { id, label:nome.trim(), color:cores[proc.fases.length%cores.length], softBg:cores[proc.fases.length%cores.length]+'20' });
-  saveData(); render(); desenharIcones();
+// ----- Migração: processos criados na versão anterior ficaram só no navegador -----
+let processosAntigosDoCache = null;
+function lerProcessosAntigos() {
+  try {
+    const d = JSON.parse(localStorage.getItem(STORAGE_KEY) || 'null');
+    if (d && Array.isArray(d._processosGen) && d._processosGen.length) return d._processosGen;
+  } catch (e) {}
+  return null;
 }
-
-function removerFaseGen(chave, faseId) {
-  if (!ehAprovadorExclusao()) { showToast('So a Priscilla pode remover colunas.'); return; }
-  const proc = processosGenericos().find(p=>p.chave===chave); if (!proc) return;
-  if (['aberto','concluido'].includes(faseId)) { showToast('Aberto e Concluido sao fixas.'); return; }
-  const n = (state.data[chave]||[]).filter(c=>c.fase===faseId).length;
-  if (n && !confirm(n+' cards nessa coluna. Mover para Aberto?')) return;
-  (state.data[chave]||[]).filter(c=>c.fase===faseId).forEach(c=>{c.fase='aberto'});
-  proc.fases = proc.fases.filter(f=>f.id!==faseId); saveData(); render(); desenharIcones();
-}
-
-function renderKanbanGenerico(proc) {
-  const items = (state.data[proc.chave]||[]).filter(cardMatchUnidade);
-  const filtros = renderFiltroUnidade()
-    + (ehEditor() ? ' <button onclick="adicionarFaseGen(\''+proc.chave+'\')" class="btn-ghost px-2 py-1 rounded text-xs"><i data-lucide="plus-circle" class="w-3.5 h-3.5 inline"></i> Coluna</button>' : '')
-    + (ehAprovadorExclusao() ? ' <button onclick="excluirProcessoGenerico(\''+proc.chave+'\')" class="btn-ghost px-2 py-1 rounded text-xs text-red-500"><i data-lucide="trash-2" class="w-3.5 h-3.5 inline"></i> Excluir processo</button>' : '');
-  let cols = '';
-  proc.fases.forEach(fase => {
-    const fi = items.filter(i=>i.fase===fase.id);
-    const rmBtn = ehEditor()&&!['aberto','concluido'].includes(fase.id) ? `<button onclick="removerFaseGen('${proc.chave}','${fase.id}')" class="btn-ghost p-1 rounded flex-shrink-0 text-red-400" title="Remover"><i data-lucide="x" class="w-3 h-3"></i></button>` : '';
-    cols += `<div class="kanban-column flex-shrink-0 flex flex-col"><div class="coluna-header" style="--cor-fase:${fase.color};"><div class="flex items-center gap-2 min-w-0"><h3 class="font-semibold text-sm truncate" style="color:${fase.color};">${escapeHtml(fase.label)}</h3><span class="coluna-contador" style="background:${fase.softBg||'#eee'};color:${fase.color};">${fi.length}</span></div>${rmBtn}<button onclick="openGenCard(null,'${proc.chave}','${fase.id}')" class="btn-ghost p-1 rounded flex-shrink-0" title="Adicionar"><i data-lucide="plus" class="w-3.5 h-3.5"></i></button></div><div class="drop-zone coluna-corpo flex-1 p-2 space-y-2 overflow-y-auto kanban-scroll" data-fase="${fase.id}" data-type="${proc.chave}">${fi.length ? fi.map(c => `<div class="card-item cursor-pointer p-3 rounded-lg border bg-white" style="border-color:var(--border);" onclick="openGenCard('${c.id}','${proc.chave}')" draggable="true" data-id="${c.id}"><div class="font-semibold text-sm mb-1">${escapeHtml(c.titulo||'(sem titulo)')}</div><div class="flex items-center gap-2 text-xs" style="color:var(--text-3);">${c.responsavel?'<span>&#128100; '+escapeHtml(c.responsavel.split(' ')[0])+'</span>':''}${c.prazo?'<span>&#128197; '+c.prazo+'</span>':''}</div></div>`).join('') : '<div class="coluna-vazia">Nenhum card</div>'}</div></div>`;
+function migrarProcessosAntigos() {
+  const antigos = processosAntigosDoCache;
+  processosAntigosDoCache = null;
+  // Operações da versão anterior com tipo "gen_..." não servem mais (o servidor migra os cards sozinho)
+  const antes = filaEnvio.length;
+  filaEnvio = filaEnvio.filter(o => !(o.tipo && String(o.tipo).startsWith('gen_')));
+  if (filaEnvio.length !== antes) gravarFila();
+  if (!antigos || !ehEditor()) return;
+  let n = 0;
+  antigos.forEach(p => {
+    if (!p || !p.chave || estrutura().some(e => e.id === p.chave)) return;
+    salvarEstrutura({
+      id: p.chave, numero: p.chave, kind: 'processo', fase: 'ativo', nome: p.nome || p.chave, icone: 'clipboard-list',
+      fases: (p.fases || []).map(f => ({ id: f.id, label: f.label, color: f.color, softBg: f.softBg || '#E5E7EB' })),
+      criadoPor: p.criadoPor || meuEmail(), criadoEm: new Date().toISOString(),
+    });
+    n++;
   });
-  return `<div class="h-full flex flex-col"><div class="bg-white border-b px-5 py-2.5 flex items-center gap-3 text-sm" style="border-color:var(--border);">${filtros}<div class="flex-1"></div><span class="text-xs" style="color:var(--text-3);">${items.length} cards</span></div><div class="flex-1 overflow-x-auto kanban-scroll p-4"><div class="flex gap-4 h-full">${cols}</div></div></div>`;
+  if (n) showToast(n + ' processo(s) criado(s) antes foram enviados para o servidor.');
 }
 
-function openGenCard(id, chave, faseInicial) {
-  const proc = processosGenericos().find(p=>p.chave===chave); if (!proc) return;
-  state.editingType = chave;
-  const card = id ? (state.data[chave]||[]).find(c=>c.id===id)||{} : { fase: faseInicial||'aberto' };
-  state.editingCard = card;
-  const modal = document.getElementById('cardModal'); const body = document.getElementById('modalBody');
-  document.getElementById('modalTitle').textContent = card.titulo||'Novo card';
-  document.getElementById('modalSubtitle').textContent = card.id||'';
-  const isNew = !card.id;
-  body.innerHTML = `<div class="space-y-4"><div class="grid grid-cols-2 gap-3">
-    <div class="col-span-2"><label class="block text-xs font-semibold mb-1" style="color:var(--text-2);">TITULO *</label><input id="f_gen_titulo" class="input" value="${escapeHtml(card.titulo||'')}" placeholder="Titulo do card"></div>
-    <div><label class="block text-xs font-semibold mb-1" style="color:var(--text-2);">FASE</label><select id="f_gen_fase" class="input">${proc.fases.map(f=>'<option value="'+f.id+'"'+(card.fase===f.id?' selected':'')+'>'+escapeHtml(f.label)+'</option>').join('')}</select></div>
-    <div><label class="block text-xs font-semibold mb-1" style="color:var(--text-2);">RESPONSAVEL</label><select id="f_gen_responsavel" class="input"><option value="">-</option>${RESPONSAVEIS.map(r=>'<option value="'+escapeHtml(r)+'"'+(card.responsavel===r?' selected':'')+'>'+escapeHtml(r)+'</option>').join('')}</select></div>
-    <div><label class="block text-xs font-semibold mb-1" style="color:var(--text-2);">PRAZO</label><input id="f_gen_prazo" type="date" class="input" value="${card.prazo||''}"></div>
-    <div><label class="block text-xs font-semibold mb-1" style="color:var(--text-2);">UNIDADE</label><select id="f_gen_unidade" class="input"><option value="">-</option>${UNIDADES.map(u=>'<option value="'+u+'"'+(card.unidade===u?' selected':'')+'>'+u+'</option>').join('')}</select></div>
-    <div class="col-span-2"><label class="block text-xs font-semibold mb-1" style="color:var(--text-2);">DESCRICAO</label><textarea id="f_gen_descricao" class="input" rows="3">${escapeHtml(card.descricao||'')}</textarea></div>
-    <div class="col-span-2 flex justify-end"><button onclick="saveGenCard('${proc.chave}')" class="btn btn-primary"><i data-lucide="check" class="w-4 h-4"></i> Salvar</button></div>
-    </div></div>`;
-  document.getElementById('btnDelete')?.classList.toggle('hidden', isNew);
-  document.getElementById('btnsCompartilhar')?.classList.toggle('hidden', isNew);
-  modal.classList.remove('hidden'); modal.classList.add('flex'); desenharIcones();
+// ----- Permissões (tela de Configurações) -----
+const ABAS_FIXAS = [
+  { id: 'dashboard', label: 'Dashboard' }, { id: 'desvios', label: 'Desvios' }, { id: 'acoes', label: 'Ações' },
+  { id: 'nc', label: 'NC Fornec.' }, { id: 'sqm', label: 'SQM' }, { id: 'relatorios', label: 'Relatórios' },
+  { id: 'lixeira', label: 'Lixeira' },
+];
+function emailsDaEquipe() {
+  return listaPessoas().map(n => String(EMAILS_EQUIPE[n] || '').toLowerCase().trim()).filter(e => e.includes('@'));
+}
+function garantirPermissoesCfg() {
+  state.data._config = state.data._config || {};
+  const p = state.data._config.permissoes = state.data._config.permissoes || {};
+  if (!Array.isArray(p.editores)) p.editores = PERMISSOES_PADRAO.editores.slice();
+  if (!Array.isArray(p.excluir)) p.excluir = PERMISSOES_PADRAO.excluir.slice();
+  p.abas = p.abas || {};
+  return p;
+}
+function persistirPermissoes(msg) {
+  saveData();
+  salvarConfigServidor();
+  aplicarPermissoes();
+  renderNavProcessos();
+  const box = document.getElementById('permissoesBox');
+  if (box) box.outerHTML = renderPermissoesConfig();
+  desenharIcones();
+  showToast(msg || 'Permissão atualizada. A pessoa vê a mudança ao recarregar a página.');
 }
 
-function saveGenCard(chave) {
-  const proc = processosGenericos().find(p=>p.chave===chave); if (!proc) return;
-  const get = id => document.getElementById(id)?.value?.trim()||'';
-  const card = state.editingCard||{};
-  const isNew = !card.id;
-  card.titulo = get('f_gen_titulo'); card.fase = get('f_gen_fase')||'aberto';
-  card.responsavel = get('f_gen_responsavel'); card.prazo = get('f_gen_prazo');
-  card.unidade = get('f_gen_unidade'); card.descricao = get('f_gen_descricao');
-  card.registro = card.registro||{}; card.registro.unidade = card.unidade; card.registro.titulo = card.titulo;
-  if (isNew) {
-    const arr = state.data[chave] = state.data[chave]||[];
-    const maxN = arr.reduce((m,c)=>{const n=/(\d+)$/.exec(c.id||'');return n?Math.max(m,+n[1]):m},0);
-    card.id = chave.toUpperCase().replace(/^GEN_/,'').slice(0,6)+'-'+String(maxN+1).padStart(4,'0');
-    card.numero = card.id; card.criadoEm = new Date().toISOString(); arr.push(card);
-  } else {
-    const idx = (state.data[chave]||[]).findIndex(c=>c.id===card.id);
-    if (idx >= 0) state.data[chave][idx] = card;
-  }
-  enfileirar({ acao:'salvarCard', tipo:chave, card, versaoBase:card._versao||0 });
-  closeCardModal(); render(); desenharIcones(); showToast(isNew?'Card criado':'Salvo');
+function renderPermissoesConfig() {
+  const p = permissoes();
+  const pessoas = listaPessoas()
+    .map(nome => ({ nome, email: String(EMAILS_EQUIPE[nome] || '').toLowerCase().trim() }))
+    .filter(x => x.email.includes('@'));
+  const abas = ABAS_FIXAS.concat(processosAtivos().map(pr => ({ id: 'proc:' + pr.id, label: pr.nome })));
+  const nomeTd = x => `<td class="py-1.5 pr-3 text-sm whitespace-nowrap">${escapeHtml(x.nome)}${ADMINS.includes(x.email) ? ' <span class="text-xs" style="color: var(--text-3);">(admin)</span>' : ''}</td>`;
+  const caixaAcao = (k, x) => {
+    const fixo = ADMINS.includes(x.email);
+    return `<td class="text-center px-2"><input type="checkbox" class="w-4 h-4 cursor-pointer"
+      ${fixo || p[k].includes(x.email) ? 'checked' : ''} ${fixo ? 'disabled title="Administrador: sempre pode"' : ''}
+      onchange="alterarPermissao('${k}', '${x.email}', this.checked)"></td>`;
+  };
+  const caixaAba = (aba, x) => {
+    const lista = listaAba(aba.id);
+    const todos = lista.includes('*');
+    return `<td class="text-center px-2"><input type="checkbox" class="w-4 h-4 cursor-pointer"
+      ${todos || lista.includes(x.email) ? 'checked' : ''} ${todos ? 'disabled title="Liberada para todos"' : ''}
+      onchange="alterarAba('${aba.id}', '${x.email}', this.checked)"></td>`;
+  };
+  return `
+    <div id="permissoesBox" class="bg-white rounded-lg border p-5 mb-4" style="border-color: var(--border);">
+      <h3 class="font-bold mb-1">🔐 Permissões</h3>
+      <p class="text-sm mb-3" style="color: var(--text-2);">
+        <strong>Editar estrutura:</strong> criar processos no menu e colunas nos quadros.
+        <strong>Excluir:</strong> apagar cards, colunas e processos (quem não pode, só consegue pedir por e-mail).
+        Administradores sempre editam e excluem.
+      </p>
+      <div class="overflow-x-auto mb-6">
+        <table class="text-left">
+          <thead><tr class="text-xs" style="color: var(--text-3);">
+            <th class="py-1">Pessoa</th><th class="text-center px-2">Editar estrutura</th><th class="text-center px-2">Excluir</th>
+          </tr></thead>
+          <tbody>${pessoas.map(x => `<tr class="border-t" style="border-color: var(--border);">${nomeTd(x)}${caixaAcao('editores', x)}${caixaAcao('excluir', x)}</tr>`).join('')}</tbody>
+        </table>
+      </div>
+
+      <h3 class="font-bold mb-1">👁️ Quem vê cada aba</h3>
+      <p class="text-sm mb-3" style="color: var(--text-2);">
+        Marque <strong>Todos</strong> para liberar a aba para a equipe inteira (inclusive quem entrar depois).
+        Desmarque para escolher pessoa por pessoa. Configurações continua só para administradores.
+      </p>
+      <div class="overflow-x-auto">
+        <table class="text-left">
+          <thead>
+            <tr class="text-xs" style="color: var(--text-3);">
+              <th class="py-1">Pessoa</th>
+              ${abas.map(a => `<th class="text-center px-2 whitespace-nowrap">${escapeHtml(a.label)}</th>`).join('')}
+            </tr>
+            <tr class="text-xs" style="background: var(--surface-2);">
+              <td class="py-1.5 pr-3 font-semibold">Todos</td>
+              ${abas.map(a => `<td class="text-center px-2"><input type="checkbox" class="w-4 h-4 cursor-pointer"
+                ${listaAba(a.id).includes('*') ? 'checked' : ''} onchange="alterarAbaTodos('${a.id}', this.checked)"
+                title="Liberar ${escapeHtml(a.label)} para todos"></td>`).join('')}
+            </tr>
+          </thead>
+          <tbody>${pessoas.map(x => `<tr class="border-t" style="border-color: var(--border);">${nomeTd(x)}${abas.map(a => caixaAba(a, x)).join('')}</tr>`).join('')}</tbody>
+        </table>
+      </div>
+    </div>`;
 }
 
-function abrirNovoCard() {
-  const proc = processosGenericos().find(pg=>pg.chave===state.currentView);
-  if (proc) { openGenCard(null, proc.chave, 'aberto'); return; }
-  openNewCardModal();
+function alterarPermissao(chave, email, ligado) {
+  if (!ehAdmin()) { showToast('Só administradores mudam permissões.'); return; }
+  const p = garantirPermissoesCfg();
+  const lista = new Set(p[chave]);
+  if (ligado) lista.add(email); else lista.delete(email);
+  p[chave] = Array.from(lista);
+  persistirPermissoes();
 }
+
+function alterarAbaTodos(aba, todos) {
+  if (!ehAdmin()) { showToast('Só administradores mudam permissões.'); return; }
+  const p = garantirPermissoesCfg();
+  // Ao tirar o "Todos", começa com a equipe inteira marcada: aí é só desmarcar quem não deve ver
+  const atual = listaAba(aba);
+  if (!todos && !atual.includes('*')) return; // já estava restrita: não muda nada
+  p.abas[aba] = todos ? ['*'] : emailsDaEquipe();
+  persistirPermissoes(todos ? 'Aba liberada para todos.' : 'Agora desmarque quem não deve ver essa aba.');
+}
+
+function alterarAba(aba, email, ligado) {
+  if (!ehAdmin()) { showToast('Só administradores mudam permissões.'); return; }
+  const p = garantirPermissoesCfg();
+  const atual = listaAba(aba);
+  const lista = new Set(atual.includes('*') ? emailsDaEquipe() : atual);
+  if (ligado) lista.add(email); else lista.delete(email);
+  p.abas[aba] = Array.from(lista);
+  persistirPermissoes();
+}
+
+// ----- Quem vê cada aba -----
+function listaAba(aba) {
+  const p = (state.data && state.data._config && state.data._config.permissoes) || {};
+  if (p.abas && Array.isArray(p.abas[aba])) return p.abas[aba].map(e => String(e).toLowerCase());
+  const doDashboard = aba === 'dashboard' || aba === 'relatorios';
+  if (doDashboard && Array.isArray(p.dashboard)) return p.dashboard.map(e => String(e).toLowerCase()); // escolha da versão anterior
+  if (doDashboard) return PERMISSOES_PADRAO.dashboard.slice();
+  return ['*'];
+}
+function podeVerAba(view) {
+  if (view === 'config') return ehAdmin();
+  if (view === 'semAcesso') return true;
+  const lista = listaAba(view);
+  return lista.includes('*') || lista.includes(meuEmail());
+}
+function primeiraAbaVisivel() {
+  const ordem = ['dashboard', 'desvios', 'acoes', 'nc', 'sqm']
+    .concat(processosAtivos().map(p => 'proc:' + p.id), ['relatorios', 'lixeira']);
+  return ordem.find(v => podeVerAba(v)) || (ehAdmin() ? 'config' : 'semAcesso');
+}
+
+// Configuração vai para o servidor na hora (antes só ia junto com o próximo card salvo)
+function salvarConfigServidor() {
+  if (!ehAdmin()) return;
+  enfileirar({ acao: 'salvarConfig' });
+}
+
+function filtrarMinhas() { setFilter(state.currentUser?.name || ''); }
+
+function tipoDaView() {
+  if (procAtualId()) return 'generico';
+  return ({ desvios: 'desvio', acoes: 'acao', nc: 'nc', sqm: 'sqm' })[state.currentView] || 'desvio';
+}
+
+function abrirNovoCard() { openNewCardModal(); }
 
 
 function switchView(view) {
   if (view === 'config' && !ehAdmin()) { showToast('Só administradores acessam as Configurações'); return; }
+  if (!podeVerAba(view)) { showToast('Você não tem acesso a essa aba.'); view = primeiraAbaVisivel(); }
   state.currentView = view;
   document.querySelectorAll('.nav-item').forEach(el => {
     el.classList.toggle('active', el.dataset.view === view);
@@ -2080,16 +2458,27 @@ function render() {
       btnNew.style.display = 'none';
       container.innerHTML = renderConfig();
       break;
+    case 'semAcesso':
+      titleEl.textContent = 'Sem acesso';
+      subEl.textContent = '';
+      btnNew.style.display = 'none';
+      container.innerHTML = '<div class="p-10 text-center" style="color: var(--text-2);">Você ainda não tem acesso a nenhuma aba.<br>Fale com o André ou a Priscilla.</div>';
+      break;
     default: {
-      const _proc = processosGenericos().find(pg => pg.chave === state.currentView);
-      if (_proc) {
-        titleEl.textContent = _proc.nome;
-        subEl.textContent = (state.data[_proc.chave]||[]).filter(c=>c.fase!=='concluido').length + ' em aberto';
+      const proc = procAtual();
+      if (proc) {
+        titleEl.textContent = proc.nome;
+        const abertos = (state.data.generico || []).filter(c => c.processo === proc.id && c.fase !== 'concluido').length;
+        subEl.textContent = abertos + ' em aberto · criado por ' + ((proc.criadoPor || '').split('@')[0] || '—');
         btnNew.style.display = 'inline-flex';
         btnNew.innerHTML = '<i data-lucide="plus" class="w-4 h-4"></i> Novo card';
-        container.innerHTML = renderKanbanGenerico(_proc);
-        setupDragDrop(_proc.chave);
-      } else { state.currentView='desvios'; render(); return; }
+        container.innerHTML = renderKanban('generico');
+        setupDragDrop('generico');
+      } else {
+        state.currentView = primeiraAbaVisivel();
+        render();
+        return;
+      }
       break;
     }
   }
@@ -2108,22 +2497,22 @@ function updateStatusBar() {
   const ncAguardando = (state.data.nc || []).filter(n => n.fase === 'aguardandoFornecedor').length;
   
   document.getElementById('statusBarStats').innerHTML = `
-    <button onclick="irParaFiltro('desvios','criticidade:1')" class="stat-pill" title="Ver desvios críticos">
+    ${podeVerAba('desvios') ? '' : '<!--'}<button onclick="irParaFiltro('desvios','criticidade:1')" class="stat-pill" title="Ver desvios críticos">
       <span style="color:#FCA5A5">●</span> <strong>${criticosAbertos}</strong> críticos
-    </button>
-    <button onclick="irParaFiltro('acoes','')" class="stat-pill" title="Ver ações">
+    </button>${podeVerAba('desvios') ? '' : '-->'}
+    ${podeVerAba('acoes') ? '' : '<!--'}<button onclick="irParaFiltro('acoes','')" class="stat-pill" title="Ver ações">
       <span style="color:#FDE68A">●</span> <strong>${vencendo.length + vencidas.length}</strong> urgentes
-    </button>
-    <button onclick="irParaFiltro('acoes','bloqueado')" class="stat-pill" title="Ver ações bloqueadas">
+    </button>${podeVerAba('acoes') ? '' : '-->'}
+    ${podeVerAba('acoes') ? '' : '<!--'}<button onclick="irParaFiltro('acoes','bloqueado')" class="stat-pill" title="Ver ações bloqueadas">
       <span style="color:#FDBA74">●</span> <strong>${bloqueadas}</strong> bloqueadas
-    </button>
-    <button onclick="irParaFiltro('desvios','atraso')" class="stat-pill" title="Ver desvios atrasados">
+    </button>${podeVerAba('acoes') ? '' : '-->'}
+    ${podeVerAba('desvios') ? '' : '<!--'}<button onclick="irParaFiltro('desvios','atraso')" class="stat-pill" title="Ver desvios atrasados">
       <span style="color:#C4B5FD">●</span> <strong>${atrasados}</strong> atrasados
-    </button>
-    <button onclick="irParaFiltro('nc','aguardando')" class="stat-pill" title="Ver NCs aguardando fornecedor">
+    </button>${podeVerAba('desvios') ? '' : '-->'}
+    ${podeVerAba('nc') ? '' : '<!--'}<button onclick="irParaFiltro('nc','aguardando')" class="stat-pill" title="Ver NCs aguardando fornecedor">
       <span style="color:#93C5FD">●</span> <strong>${ncAguardando}</strong> c/ fornecedor
-    </button>
-    ${(vencendo.length + vencidas.length) > 0 ? `
+    </button>${podeVerAba('nc') ? '' : '-->'}
+    ${(vencendo.length + vencidas.length) > 0 && podeVerAba('acoes') ? `
       <button onclick="notificarTodosVencendo()" class="stat-pill" style="background: rgba(255,255,255,0.9); color: var(--accent);" title="Enviar um e-mail para cada responsável">
         <i data-lucide="mail" class="w-3 h-3"></i> Notificar
       </button>
@@ -2309,7 +2698,7 @@ function renderDashboard() {
       <div class="bg-white rounded-lg border p-4 mb-6" style="border-color: var(--border);">
         <h3 class="font-bold mb-3 text-sm">Distribuição do fluxo</h3>
         <div class="flex items-center gap-2">
-          ${FASES_DESVIO.map((f, idx) => {
+          ${getFasesByType('desvio').map((f, idx) => {
             const count = d.desvios.filter(x => x.fase === f.id).length;
             return `
               <div class="flex-1">
@@ -2318,7 +2707,7 @@ function renderDashboard() {
                   <div class="text-xs mt-1 font-medium" style="color: ${f.color};">${f.label}</div>
                 </div>
               </div>
-              ${idx < FASES_DESVIO.length - 1 ? '<i data-lucide="chevron-right" class="w-4 h-4" style="color: var(--text-3);"></i>' : ''}
+              ${idx < getFasesByType('desvio').length - 1 ? '<i data-lucide="chevron-right" class="w-4 h-4" style="color: var(--text-3);"></i>' : ''}
             `;
           }).join('')}
         </div>
@@ -2384,7 +2773,7 @@ function renderDashboard() {
         <div class="space-y-2">
           ${abertos.slice(0, 5).map(dv => {
             const crit = CRITICIDADES.find(c => c.id === dv.criticidade) || CRITICIDADES[2];
-            const fase = FASES_DESVIO.find(f => f.id === dv.fase) || FASES_DESVIO[0];
+            const fase = getFasesByType('desvio').find(f => f.id === dv.fase) || getFasesByType('desvio')[0];
             const r = dv.registro || {};
             return `
               <div onclick="openCard('${dv.id}', 'desvio')" class="p-3 rounded-md border cursor-pointer hover:bg-gray-50 transition flex items-center gap-3" style="border-color: var(--border);">
@@ -2409,18 +2798,20 @@ function renderDashboard() {
 }
 
 // =================== KANBAN ===================
-function getFasesByType(type) {
-  return type === 'desvio' ? FASES_DESVIO
-       : type === 'acao' ? FASES_ACAO
-       : type === 'nc' ? FASES_NC
-       : type === 'sqm' ? FASES_SQM
-       : [];
+function getFasesByType(type, card) {
+  if (type === 'desvio') return fasesComExtras(FASES_DESVIO, 'desvio');
+  if (type === 'acao') return fasesComExtras(FASES_ACAO, 'acao');
+  if (type === 'nc') return FASES_NC;
+  if (type === 'sqm') return FASES_SQM;
+  if (type === 'generico') { const p = card ? procDoCard(card) : procAtual(); return (p && p.fases) || []; }
+  return [];
 }
 function getItemsByType(type) {
   return type === 'desvio' ? state.data.desvios
        : type === 'acao' ? state.data.acoes
        : type === 'nc' ? (state.data.nc || [])
        : type === 'sqm' ? (state.data.sqm || [])
+       : type === 'generico' ? (state.data.generico || [])
        : [];
 }
 
@@ -2460,7 +2851,7 @@ function dataDoCard(c) {
 let filtroUnidade = '';
 function setFiltroUnidade(val) { filtroUnidade = val; render(); desenharIcones(); }
 function renderFiltroUnidade() {
-  return '<select onchange="setFiltroUnidade(this.value)" class="input text-xs" style="min-width:130px;padding:4px 8px;">'
+  return '<select onchange="setFiltroUnidade(this.value)" class="input text-xs" style="width:auto;padding:4px 8px;" title="Filtrar por unidade">'
     +'<option value=""'+(!filtroUnidade?' selected':'')+'>Todas unidades</option>'
     +'<option value="7L"'+(filtroUnidade==='7L'?' selected':'')+'>Sete Lagoas</option>'
     +'<option value="BG"'+(filtroUnidade==='BG'?' selected':'')+'>Barra do Garças</option></select>';
@@ -2472,13 +2863,15 @@ function cardMatchUnidade(item) {
 }
 function renderKanban(type) {
   const fases = getFasesByType(type);
-  const items = getItemsByType(type);
+  const items = type === 'generico'
+    ? getItemsByType(type).filter(c => c.processo === procAtualId())
+    : getItemsByType(type);
   const filtered = filterItems(items, state.filter, type).filter(cardMatchUnidade);
   
   return `
     <div class="h-full flex flex-col">
       <!-- Filter bar -->
-      <div class="bg-white border-b px-5 py-2.5 flex items-center gap-3 text-sm" style="border-color: var(--border);">
+      <div class="barra-filtros bg-white border-b px-5 py-2.5 flex items-center gap-2 text-sm" style="border-color: var(--border);">
         ${renderFiltroUnidade()} <span class="text-xs font-semibold" style="color: var(--text-3);">FILTROS:</span>
         ${type === 'desvio' ? `
           <button onclick="setFilter('criticidade:1')" class="btn-ghost px-2 py-1 rounded text-xs">🔴 Críticos</button>
@@ -2491,12 +2884,13 @@ function renderKanban(type) {
         ` : type === 'sqm' ? `
           <button onclick="setFilter('reprovado')" class="btn-ghost px-2 py-1 rounded text-xs">❌ Reprovados</button>
           <button onclick="setFilter('homologado')" class="btn-ghost px-2 py-1 rounded text-xs">✅ Homologados</button>
-        ` : `
+        ` : type === 'generico' ? '' : `
           <button onclick="setFilter('critica')" class="btn-ghost px-2 py-1 rounded text-xs">🔴 Críticas</button>
           <button onclick="setFilter('bloqueado')" class="btn-ghost px-2 py-1 rounded text-xs">⛔ Bloqueadas</button>
         `}
-        <button onclick="setFilter('André Augusto')" class="btn-ghost px-2 py-1 rounded text-xs">👤 Minhas</button>
+        <button onclick="filtrarMinhas()" class="btn-ghost px-2 py-1 rounded text-xs">👤 Minhas</button>
         <button onclick="setFilter('')" class="btn-ghost px-2 py-1 rounded text-xs">✕ Limpar</button>
+        ${renderBotoesEstrutura(type)}
         <div class="flex-1"></div>
         <span class="text-xs" style="color: var(--text-3);">${filtered.length} card${filtered.length !== 1 ? 's' : ''}</span>
       </div>
@@ -2518,6 +2912,7 @@ function renderKanban(type) {
                     <h3 class="font-semibold text-sm truncate" style="color: ${fase.color};">${fase.label}</h3>
                     <span class="coluna-contador" style="background: ${fase.softBg}; color: ${fase.color};">${todosDaFase.length}</span>
                   </div>
+                  ${podeRemoverColuna(type, fase.id) ? `<button onclick="removerColuna('${type}', '${fase.id}')" class="btn-ghost p-1 rounded flex-shrink-0 ml-auto" title="Remover esta coluna" style="color: var(--danger);"><i data-lucide="x" class="w-3.5 h-3.5"></i></button>` : ''}
                   <button onclick="openNewCardModalInPhase('${fase.id}')" class="btn-ghost p-1 rounded flex-shrink-0" title="Adicionar aqui">
                     <i data-lucide="plus" class="w-3.5 h-3.5"></i>
                   </button>
@@ -2553,6 +2948,7 @@ function renderCardItem(item, type) {
   if (type === 'acao') return renderCardAcao(item);
   if (type === 'nc') return renderCardNC(item);
   if (type === 'sqm') return renderCardSQM(item);
+  if (type === 'generico') return renderCardGenerico(item);
   return '';
 }
 
@@ -2765,14 +3161,14 @@ function moveCard(id, newFase, type) {
   if (oldFase === newFase) return;
   card.fase = newFase;
   // Atualiza histórico (desvios, nc, sqm têm histórico estruturado)
-  if (type === 'desvio' || type === 'nc' || type === 'sqm') {
+  if (type === 'desvio' || type === 'nc' || type === 'sqm' || type === 'generico') {
     if (!card.historico) card.historico = [];
     card.historico.push({ fase: newFase, data: new Date().toISOString().split('T')[0], duracao: '0 dias' });
   }
   saveData();
   render();
-  const fases = getFasesByType(type);
-  showToast(`Card movido para ${fases.find(f => f.id === newFase).label}`);
+  const faseDestino = getFasesByType(type, card).find(f => f.id === newFase);
+  showToast('Card movido para ' + (faseDestino ? faseDestino.label : newFase));
   enviarCard(type, card);
   simulateTeamsNotification(card, oldFase, newFase, type);
 }
@@ -2793,6 +3189,9 @@ function filterItems(items, filter, type) {
   if (f === 'homologado' && type === 'sqm') return items.filter(i => ['qualidade','she','operacoes'].every(g => i.aprovacoes?.[g]?.status === 'aprovado'));
   // Busca genérica
   return items.filter(i => {
+    if (type === 'generico') {
+      return [i.numero, i.titulo, i.descricao, i.responsavel, i.unidade].filter(Boolean).join(' ').toLowerCase().includes(f);
+    }
     if (type === 'desvio') {
       const r = i.registro || {}, aq = i.avalQualidade || {};
       return [i.numero, r.titulo, r.unidade, r.descricao, r.areaEquipamento, aq.area, aq.setor, aq.categoria, aq.tipo, i.responsavel]
@@ -2824,15 +3223,13 @@ function applyFilter() {
 
 // =================== MODAL ===================
 function openNewCardModal() {
-  const map = { desvios: 'desvio', acoes: 'acao', nc: 'nc', sqm: 'sqm' };
-  state.editingType = map[state.currentView] || 'desvio';
-  state.editingCard = null;
+  state.editingType = tipoDaView();
+  state.editingCard = state.editingType === 'generico' ? { processo: procAtualId() } : null;
   renderModal();
 }
 function openNewCardModalInPhase(fase) {
-  const map = { desvios: 'desvio', acoes: 'acao', nc: 'nc', sqm: 'sqm' };
-  state.editingType = map[state.currentView] || 'desvio';
-  state.editingCard = { fase, _isNewInPhase: true };
+  state.editingType = tipoDaView();
+  state.editingCard = { fase, _isNewInPhase: true, ...(state.editingType === 'generico' ? { processo: procAtualId() } : {}) };
   renderModal();
 }
 function openCard(id, type) {
@@ -2937,7 +3334,8 @@ function renderModal() {
   const card = state.editingCard || {};
   const isNew = !card.id;
   
-  const titulosNovos = { desvio: 'Novo desvio', acao: 'Nova ação', nc: 'Nova NC de Fornecedor', sqm: 'Nova avaliação SQM' };
+  const titulosNovos = { desvio: 'Novo desvio', acao: 'Nova ação', nc: 'Nova NC de Fornecedor', sqm: 'Nova avaliação SQM',
+    generico: 'Novo card' + (procDoCard(card) ? ' · ' + procDoCard(card).nome : '') };
   const tituloExistente = card.registro?.titulo || card.compras?.produtoMP || card.titulo || '(sem título)';
   
   document.getElementById('modalTitle').textContent = isNew ? titulosNovos[type] : tituloExistente;
@@ -2952,6 +3350,7 @@ function renderModal() {
   else if (type === 'acao') body.innerHTML = renderAcaoForm(card, isNew);
   else if (type === 'nc') body.innerHTML = renderNCForm(card, isNew);
   else if (type === 'sqm') body.innerHTML = renderSQMForm(card, isNew);
+  else if (type === 'generico') body.innerHTML = renderGenericoForm(card, isNew);
   
   document.getElementById('cardModal').classList.remove('hidden');
   document.getElementById('cardModal').classList.add('flex');
@@ -3192,11 +3591,11 @@ function renderDesvioForm(card, isNew) {
   card.rcaData = card.rcaData || {};
   
   const faseAtual = card.fase || 'registro';
-  const faseIdx = FASES_DESVIO.findIndex(f => f.id === faseAtual);
+  const faseIdx = getFasesByType('desvio').findIndex(f => f.id === faseAtual);
   
   // Auxiliar: qual etapa está "aberta" para edição (a fase atual)
   const podeEditar = (etapaId) => {
-    const idx = FASES_DESVIO.findIndex(f => f.id === etapaId);
+    const idx = getFasesByType('desvio').findIndex(f => f.id === etapaId);
     return idx <= faseIdx;
   };
   
@@ -3207,20 +3606,20 @@ function renderDesvioForm(card, isNew) {
   return `
     <!-- Barra de progresso das fases -->
     <div class="flex items-center gap-1 mb-5 p-3 rounded-lg" style="background: var(--surface-2);">
-      ${FASES_DESVIO.map((f, i) => {
+      ${getFasesByType('desvio').map((f, i) => {
         const isCurrent = f.id === faseAtual;
         const isPast = i < faseIdx;
         const isSkipped = (f.id === 'avalFormulacao' && !isNew && card.avalQualidade.precisaFormulacao === 'nao');
         return `
           <div class="flex-1 flex items-center gap-1">
             <div class="flex-1 h-1.5 rounded-full" style="background: ${isPast || isCurrent ? f.color : (isSkipped ? '#D1D5DB' : '#E5E7EB')}; ${isSkipped ? 'opacity: 0.4;' : ''}"></div>
-            ${i < FASES_DESVIO.length - 1 ? '' : ''}
+            ${i < getFasesByType('desvio').length - 1 ? '' : ''}
           </div>
         `;
       }).join('')}
     </div>
     <div class="flex justify-between text-xs mb-4" style="color: var(--text-3);">
-      ${FASES_DESVIO.map(f => {
+      ${getFasesByType('desvio').map(f => {
         const isCurrent = f.id === faseAtual;
         return `<span style="${isCurrent ? 'font-weight: 700; color: ' + f.color : ''}">${f.label}</span>`;
       }).join('')}
@@ -3238,7 +3637,7 @@ function renderDesvioForm(card, isNew) {
         <div>
           <label class="block text-xs font-semibold mb-1" style="color: var(--text-2);">FASE ATUAL</label>
           <select id="f_fase" class="input" style="min-width: 180px;">
-            ${FASES_DESVIO.map(f => `<option value="${f.id}" ${card.fase === f.id ? 'selected' : ''}>${f.label}</option>`).join('')}
+            ${getFasesByType('desvio').map(f => `<option value="${f.id}" ${card.fase === f.id ? 'selected' : ''}>${f.label}</option>`).join('')}
           </select>
         </div>
       </div>
@@ -3590,7 +3989,7 @@ function renderDesvioForm(card, isNew) {
         <h4 class="font-semibold text-sm mb-3">Histórico de fases</h4>
         <div class="space-y-2">
           ${card.historico.map(h => {
-            const f = FASES_DESVIO.find(x => x.id === h.fase) || { color: '#6B7280', label: h.fase };
+            const f = getFasesByType('desvio').find(x => x.id === h.fase) || { color: '#6B7280', label: h.fase };
             return `
               <div class="flex items-center gap-3 p-2 rounded" style="background: var(--surface-2);">
                 <span class="status-dot" style="background: ${f.color};"></span>
@@ -3679,7 +4078,7 @@ function renderAcaoForm(card, isNew) {
         <div>
           <label class="block text-xs font-semibold mb-1" style="color: var(--text-2);">FASE</label>
           <select id="f_fase" class="input">
-            ${FASES_ACAO.map(f => `<option value="${f.id}" ${card.fase === f.id ? 'selected' : ''}>${f.label}</option>`).join('')}
+            ${getFasesByType('acao').map(f => `<option value="${f.id}" ${card.fase === f.id ? 'selected' : ''}>${f.label}</option>`).join('')}
           </select>
         </div>
         <div>
@@ -4904,6 +5303,46 @@ function saveCard() {
       const idx = state.data.sqm.findIndex(d => d.id === card.id);
       state.data.sqm[idx] = card;
     }
+  } else if (type === 'generico') {
+    const procId = card.processo || state.editingCard?.processo || procAtualId();
+    const proc = processosAtivos().find(pr => pr.id === procId);
+    if (!proc) { showToast('Processo não encontrado'); return; }
+    const titulo = String(get('f_gen_titulo') || '').trim();
+    if (!titulo) { showToast('Preencha o título'); return; }
+    const previousFase = card.fase;
+    card = {
+      ...card,
+      processo: proc.id,
+      fase: get('f_fase') || (proc.fases[0] && proc.fases[0].id) || 'aberto',
+      titulo,
+      responsavel: get('f_gen_responsavel') || '',
+      prazo: get('f_gen_prazo') || '',
+      unidade: get('f_gen_unidade') || '',
+      descricao: get('f_gen_descricao') || '',
+      anexos,
+    };
+    card.registro = { ...(card.registro || {}), titulo: card.titulo, unidade: card.unidade };
+    delete card._isNewInPhase;
+    const hoje = new Date().toISOString().split('T')[0];
+    if (isNew) {
+      const sigla = proc.nome.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^A-Za-z]/g, '').slice(0, 3).toUpperCase() || 'PRC';
+      const maior = (state.data.generico || []).filter(c => c.processo === proc.id)
+        .reduce((m, c) => { const n = /-(\d+)$/.exec(c.numero || ''); return n ? Math.max(m, +n[1]) : m; }, 0);
+      card.id = idUnico('G-');
+      card.numero = sigla + '-' + String(maior + 1).padStart(4, '0');
+      card.criadoEm = new Date().toISOString();
+      card.criadoPor = meuEmail();
+      card.historico = [{ fase: card.fase, data: hoje, duracao: '0 dias' }];
+      state.data.generico = state.data.generico || [];
+      state.data.generico.push(card);
+    } else {
+      if (previousFase && previousFase !== card.fase) {
+        card.historico = card.historico || [];
+        card.historico.push({ fase: card.fase, data: hoje, duracao: '0 dias' });
+      }
+      const idx = (state.data.generico || []).findIndex(c => c.id === card.id);
+      if (idx >= 0) state.data.generico[idx] = card;
+    }
   }
   
   saveData();
@@ -4920,13 +5359,16 @@ function deleteCard() {
   if (modoSomenteLeitura) { showToast('Card bloqueado'); return; }
   const type = state.editingType; const card = state.editingCard;
   if (!card || !card.id) return;
-  if (!ehEditor() && !ehAprovadorExclusao()) { showToast('Você não tem permissão para excluir. Peça à Priscilla.'); return; }
-  if (!ehAprovadorExclusao()) {
-    if (!confirm('A exclusão precisa da aprovação de Priscilla Silva.\nDeseja solicitar?')) return;
-    const tit = card.registro?.titulo||card.compras?.produtoMP||card.titulo||'(sem título)';
-    sendEmail(APROVADOR_EXCLUSAO, '[Rumi] Solicitação exclusão — '+(card.numero||card.id),
-      'Solicitação de exclusão:\n\nCard: '+(card.numero||card.id)+'\nTítulo: '+tit+'\nPor: '+(state.currentUser?.name||state.currentUser?.email)+'\n\nPara aprovar, entre na Rumi e exclua.');
-    showToast('Solicitação enviada para a Priscilla.'); return;
+  if (!podeExcluir()) {
+    const quem = permissoes().excluir.filter(e => e.includes('@'));
+    const destino = (quem.length ? quem : ADMINS).join(',');
+    if (!confirm('Você não tem permissão para excluir.\n\nQuem pode: ' + (quem.map(e => e.split('@')[0]).join(', ') || 'administradores') + '.\nDeseja enviar um pedido de exclusão por e-mail?')) return;
+    const tit = card.registro?.titulo || card.compras?.produtoMP || card.titulo || '(sem título)';
+    sendEmail(destino, '[Rumi] Pedido de exclusão — ' + (card.numero || card.id),
+      'Pedido de exclusão de card:\n\nCard: ' + (card.numero || card.id) + '\nTítulo: ' + tit +
+      '\nPedido por: ' + (state.currentUser?.name || state.currentUser?.email) + '\n\nPara excluir, abra o card na Rumi e use o botão Excluir.');
+    showToast('Pedido enviado. O card continua no quadro até alguém autorizado excluir.');
+    return;
   }
   if (!confirm('Mover para lixeira?\nFica guardado — dá pra restaurar.')) return;
 
@@ -4935,6 +5377,7 @@ function deleteCard() {
   else if (type === 'acao') state.data.acoes = state.data.acoes.filter(a => a.id !== id);
   else if (type === 'nc') state.data.nc = (state.data.nc || []).filter(n => n.id !== id);
   else if (type === 'sqm') state.data.sqm = (state.data.sqm || []).filter(s => s.id !== id);
+  else if (type === 'generico') state.data.generico = (state.data.generico || []).filter(g => g.id !== id);
 
   const item = {
     id: 'LIX-' + Date.now() + '-' + id,
@@ -4982,7 +5425,7 @@ function renderLixeira() {
         <p class="text-sm" style="color: var(--text-2);">
           ${itens.length} ${itens.length === 1 ? 'item guardado' : 'itens guardados'}. Restaure o que precisar ou apague de vez.
         </p>
-        <button onclick="esvaziarLixeira()" class="btn btn-secondary text-xs" style="color: var(--danger);">
+        <button onclick="esvaziarLixeira()" class="btn btn-secondary text-xs ${podeExcluir() ? '' : 'hidden'}" style="color: var(--danger);">
           <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
           Esvaziar lixeira
         </button>
@@ -5002,11 +5445,11 @@ function renderLixeira() {
                 Excluído em ${formatDate(it.excluidoEm)} por ${escapeHtml((it.excluidoPor || '').split('@')[0])}
               </div>
             </div>
-            <button onclick="restaurarDaLixeira('${it.id}')" class="btn btn-secondary text-xs">
+            <button onclick="restaurarDaLixeira('${it.id}')" class="btn btn-secondary text-xs ${podeExcluir() ? '' : 'hidden'}">
               <i data-lucide="rotate-ccw" class="w-3.5 h-3.5"></i>
               Restaurar
             </button>
-            <button onclick="apagarDaLixeira('${it.id}')" class="btn-ghost p-2 rounded" title="Apagar definitivamente" style="color: var(--danger);">
+            <button onclick="apagarDaLixeira('${it.id}')" class="btn-ghost p-2 rounded ${podeExcluir() ? '' : 'hidden'}" title="Apagar definitivamente" style="color: var(--danger);">
               <i data-lucide="x" class="w-4 h-4"></i>
             </button>
           </div>
@@ -5021,7 +5464,8 @@ function restaurarDaLixeira(idLixeira) {
   const item = itens.find(i => i.id === idLixeira);
   if (!item) return;
 
-  const destino = { desvio: 'desvios', acao: 'acoes', nc: 'nc', sqm: 'sqm' }[item.tipoOriginal];
+  if (!podeExcluir()) { showToast('Só quem pode excluir mexe na lixeira.'); return; }
+  const destino = { desvio: 'desvios', acao: 'acoes', nc: 'nc', sqm: 'sqm', generico: 'generico' }[item.tipoOriginal];
   if (!destino) { showToast('Não consegui identificar o tipo do card'); return; }
 
   state.data[destino] = state.data[destino] || [];
@@ -5043,6 +5487,7 @@ function restaurarDaLixeira(idLixeira) {
 }
 
 function apagarDaLixeira(idLixeira) {
+  if (!podeExcluir()) { showToast('Só quem pode excluir mexe na lixeira.'); return; }
   const item = (state.data.lixeira || []).find(i => i.id === idLixeira);
   if (!item) return;
   if (!confirm(`Apagar ${item.numero} definitivamente?\n\nIsso não pode ser desfeito.`)) return;
@@ -5058,6 +5503,7 @@ function apagarDaLixeira(idLixeira) {
 }
 
 function esvaziarLixeira() {
+  if (!podeExcluir()) { showToast('Só quem pode excluir mexe na lixeira.'); return; }
   const itens = state.data.lixeira || [];
   if (!itens.length) return;
   if (!confirm(`Apagar os ${itens.length} itens da lixeira definitivamente?\n\nIsso não pode ser desfeito.`)) return;
@@ -5082,7 +5528,7 @@ function renderRelatorios() {
   const acoesPorPrio = { critica: 0, alta: 0, media: 0, baixa: 0 };
   d.acoes.forEach(x => acoesPorPrio[x.prioridade]++);
   const tempoMedio = {};
-  FASES_DESVIO.forEach(f => {
+  getFasesByType('desvio').forEach(f => {
     const desviosNaFase = d.desvios.filter(x => x.historico?.some(h => h.fase === f.id));
     if (desviosNaFase.length > 0) {
       const totalDias = desviosNaFase.reduce((s, x) => {
@@ -5144,7 +5590,7 @@ function renderRelatorios() {
           <h3 class="font-bold mb-4">Tempo médio por fase</h3>
           <div class="space-y-2">
             ${Object.entries(tempoMedio).map(([label, dias]) => {
-              const f = FASES_DESVIO.find(x => x.label === label);
+              const f = getFasesByType('desvio').find(x => x.label === label);
               const max = Math.max(...Object.values(tempoMedio), 1);
               return `
                 <div>
@@ -5224,7 +5670,7 @@ function exportCSV(type) {
       const r = i.registro || {}, aq = i.avalQualidade || {}, af = i.avalFormulacao || {}, rc = i.rcaData || {};
       return {
         Numero: i.numero || i.id,
-        Fase: (FASES_DESVIO.find(f => f.id === i.fase) || {}).label || i.fase,
+        Fase: (getFasesByType('desvio').find(f => f.id === i.fase) || {}).label || i.fase,
         Titulo: r.titulo || '',
         Unidade: r.unidade || '',
         Area: aq.area || '',
@@ -5316,6 +5762,8 @@ function renderConfig() {
           `).join('')}
         </div>
       </div>
+
+      ${renderPermissoesConfig()}
 
       <!-- Pessoas -->
       <div class="bg-white rounded-lg border p-5 mb-4" style="border-color: var(--border);">
@@ -5437,6 +5885,7 @@ function adicionarPessoa() {
   state.data._config.responsaveis = RESPONSAVEIS.slice();
 
   saveData();
+  salvarConfigServidor();
   render();
   desenharIcones();
   showToast(limpo.split(' ')[0] + ' cadastrado');
@@ -5452,6 +5901,7 @@ function removerPessoa(nome) {
   state.data._config.responsaveis = RESPONSAVEIS.slice();
 
   saveData();
+  salvarConfigServidor();
   render();
   desenharIcones();
   showToast(nome.split(' ')[0] + ' removido');
@@ -5465,6 +5915,7 @@ function atualizarEmailEquipe(input) {
   state.data._config.emailsEquipe = state.data._config.emailsEquipe || {};
   state.data._config.emailsEquipe[key] = input.value.trim();
   saveData();
+  salvarConfigServidor();
   showToast('E-mail atualizado');
 }
 
@@ -5473,6 +5924,7 @@ function atualizarWebhook(tipo, url) {
   if (tipo === 'email') state.data._config.webhookEmail = url;
   if (tipo === 'teams') state.data._config.webhookTeams = url;
   saveData();
+  salvarConfigServidor();
   showToast(url ? 'Webhook salvo (ainda não implementado — próxima release)' : 'Webhook removido');
 }
 
@@ -5482,6 +5934,7 @@ function atualizarRegra(key, canal, ativo) {
   state.data._config.regras[key] = state.data._config.regras[key] || {};
   state.data._config.regras[key][canal] = ativo;
   saveData();
+  salvarConfigServidor();
 }
 
 function exportBackup() {
@@ -5555,8 +6008,8 @@ function showToast(msg) {
 }
 
 function simulateTeamsNotification(card, oldFase, newFase, type) {
-  const fases = type === 'desvio' ? FASES_DESVIO : FASES_ACAO;
-  const newLabel = fases.find(f => f.id === newFase)?.label;
+  const newLabel = getFasesByType(type, card).find(f => f.id === newFase)?.label || newFase;
+  if (!card || !card.responsavel) return;
   setTimeout(() => {
     showToast(`📢 Teams: ${card.responsavel} notificado (${newLabel})`);
   }, 800);
